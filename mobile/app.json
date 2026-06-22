@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "AgroConecta",
+    "slug": "agroconecta",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "cl.uta.agroconecta"
+    },
+    "android": {
+      "package": "cl.uta.agroconecta",
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
+      "adaptiveIcon": {
+        "backgroundColor": "#E8F4EA",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "AgroConecta usa tu ubicación mientras utilizas la app para mostrar tu posición y ayudarte a llegar a tiendas de insumos."
+        }
+      ]
+    ]
+  }
+}
