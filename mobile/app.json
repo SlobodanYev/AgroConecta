@@ -13,6 +13,7 @@
     "android": {
       "package": "cl.uta.agroconecta",
       "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
+      "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
         "backgroundColor": "#E8F4EA",
         "foregroundImage": "./assets/android-icon-foreground.png",

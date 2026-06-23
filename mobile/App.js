@@ -118,7 +118,7 @@ function AuthScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={20}>
       <ScrollView contentContainerStyle={styles.authContainer} keyboardShouldPersistTaps="handled">
         <View style={styles.logoMark}><Text style={styles.logoLeaf}>⌁</Text></View>
         <Text style={styles.eyebrow}>AGRICULTURA CONECTADA</Text>
