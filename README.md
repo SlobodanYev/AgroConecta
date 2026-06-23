@@ -22,7 +22,7 @@ Este repositorio corresponde al avance del **Sprint 1** para la asignatura Talle
 |---|---|
 | Lenguaje | JavaScript |
 | Framework móvil | React Native con Expo |
-| Autenticación | Firebase Authentication (correo y contraseña) |
+| Autenticación | Firebase Authentication |
 | Base de datos | Cloud Firestore |
 | Mapa interactivo | react-native-maps |
 | Ubicación GPS | expo-location |
