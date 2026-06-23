@@ -149,8 +149,8 @@ function AuthScreen() {
               <Text style={styles.fieldLabel}>Rol en la plataforma</Text>
               <View style={styles.roleRow}>
                 {[
-                  ['Agricultor', 'Agricultor/a'],
-                  ['Egresado', 'Egresado/a de Agronomía'],
+                  ['Agricultor', 'Agricultor'],
+                  ['Egresado', 'Egresado'],
                 ].map(([value, label]) => (
                   <Pressable
                     key={value}
