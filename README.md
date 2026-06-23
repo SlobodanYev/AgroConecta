@@ -4,7 +4,7 @@
 
 AgroConecta es una aplicación móvil orientada a apoyar a los pequeños agricultores de la ciudad de Arica y los valles de Azapa y Lluta. La plataforma aborda dos necesidades principales:
 
-1. **Foro de asesoría técnica:** Los agricultores pueden publicar consultas agronómicas categorizadas (plagas, riego, nutrición, entre otras) y recibir orientación colaborativa de otros miembros de la comunidad y de egresados de agronomía registrados en la plataforma.
+1. **Foro de asesoría técnica:** Los agricultores pueden publicar consultas agronómicas categorizadas (plagas, riego, nutrición, entre otras) y recibir orientación de otros miembros de la comunidad y de egresados de agronomía registrados en la plataforma.
 2. **Mapa de tiendas de insumos agrícolas:** Permite localizar tiendas de insumos cercanas con marcadores interactivos y obtener la ruta hacia ellas a través de Google Maps.
 
 Este repositorio corresponde al avance del **Sprint 1** para la asignatura Taller de Técnicas de Programación.
