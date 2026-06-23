@@ -485,7 +485,7 @@ export default function App() {
   if (user === undefined) {
     content = <SafeAreaView style={styles.loading}><ActivityIndicator color={colors.green700} size="large" /><Text style={styles.loadingText}>Preparando AgroConecta…</Text></SafeAreaView>;
   } else {
-    content = user ? <MainApp user={user} /> : <SafeAreaView style={styles.app}><StatusBar style="dark" /><AuthScreen /></SafeAreaView>;
+    content = user ? <MainApp user={user} /> : <SafeAreaView style={[styles.app, { backgroundColor: colors.green50 }]}><StatusBar style="dark" /><AuthScreen /></SafeAreaView>;
   }
   return <SafeAreaProvider initialMetrics={initialWindowMetrics}>{content}</SafeAreaProvider>;
 }
