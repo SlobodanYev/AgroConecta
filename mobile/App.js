@@ -80,6 +80,8 @@ function AuthScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState('Agricultor');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -90,7 +92,10 @@ function AuthScreen() {
     setSuccess(false);
     if (!email.trim() || !password) return setMessage('Completa correo y contraseña.');
     if (password.length < 8) return setMessage('La contraseña debe tener al menos 8 caracteres.');
-    if (tab === 'register' && !name.trim()) return setMessage('Ingresa tu nombre completo.');
+    if (tab === 'register') {
+      if (!name.trim()) return setMessage('Ingresa tu nombre completo.');
+      if (password !== confirmPassword) return setMessage('Las contraseñas no coinciden.');
+    }
 
     try {
       setBusy(true);
@@ -98,6 +103,8 @@ function AuthScreen() {
         await registerUser({ name: name.trim(), email: email.trim(), password, role });
         setTab('login');
         setPassword('');
+        setConfirmPassword('');
+        setShowPassword(false);
         setSuccess(true);
         setMessage('Cuenta creada correctamente. Ya puedes iniciar sesión.');
       } else {
@@ -127,7 +134,7 @@ function AuthScreen() {
               key={value}
               accessibilityRole="tab"
               accessibilityState={{ selected: tab === value }}
-              onPress={() => { setTab(value); setMessage(''); setSuccess(false); }}
+              onPress={() => { setTab(value); setMessage(''); setSuccess(false); setPassword(''); setConfirmPassword(''); }}
               style={[styles.segment, tab === value && styles.segmentActive]}
             >
               <Text style={[styles.segmentText, tab === value && styles.segmentTextActive]}>{label}</Text>
@@ -169,14 +176,37 @@ function AuthScreen() {
           autoCapitalize="none"
           autoComplete="email"
         />
-        <Field
-          label="Contraseña"
-          value={password}
-          onChangeText={setPassword}
-          placeholder="Mínimo 8 caracteres"
-          secureTextEntry
-          autoCapitalize="none"
-        />
+        <Field label="Contraseña">
+          <View style={styles.passwordInputContainer}>
+            <TextInput
+              value={password}
+              onChangeText={setPassword}
+              placeholder="Mínimo 8 caracteres"
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              placeholderTextColor="#89938C"
+              style={styles.passwordInput}
+            />
+            <Pressable onPress={() => setShowPassword(!showPassword)} style={styles.passwordToggle}>
+              <Text style={styles.passwordToggleText}>{showPassword ? 'Ocultar' : 'Ver'}</Text>
+            </Pressable>
+          </View>
+        </Field>
+        {tab === 'register' && (
+          <Field label="Confirmar contraseña">
+            <View style={styles.passwordInputContainer}>
+              <TextInput
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                placeholder="Repite tu contraseña"
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                placeholderTextColor="#89938C"
+                style={styles.passwordInput}
+              />
+            </View>
+          </Field>
+        )}
         {!!message && <Text style={success ? styles.successText : styles.errorText}>{message}</Text>}
         <PrimaryButton onPress={submit} disabled={busy}>{busy ? 'Procesando…' : tab === 'login' ? 'Iniciar sesión' : 'Crear mi cuenta'}</PrimaryButton>
       </ScrollView>
@@ -479,6 +509,10 @@ const styles = StyleSheet.create({
   field: { marginBottom: 14 },
   fieldLabel: { color: '#284331', fontSize: 13, fontWeight: '800', marginBottom: 7 },
   input: { minHeight: 50, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.white, borderRadius: 13, paddingHorizontal: 14, color: colors.ink, fontSize: 15 },
+  passwordInputContainer: { flexDirection: 'row', alignItems: 'center', minHeight: 50, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.white, borderRadius: 13, paddingRight: 8 },
+  passwordInput: { flex: 1, minHeight: 50, paddingHorizontal: 14, color: colors.ink, fontSize: 15 },
+  passwordToggle: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.green50, borderRadius: 8 },
+  passwordToggleText: { color: colors.green800, fontSize: 13, fontWeight: '800' },
   textarea: { height: 132, textAlignVertical: 'top', paddingTop: 14 },
   roleRow: { flexDirection: 'row', gap: 8 },
   roleChip: { flex: 1, minHeight: 54, borderWidth: 1, borderColor: colors.line, borderRadius: 12, paddingHorizontal: 8, paddingVertical: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.white },
