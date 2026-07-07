@@ -17,7 +17,7 @@ import * as Location from 'expo-location';
 import { initialWindowMetrics, SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import StoreMap from './src/components/StoreMap';
-import { CATEGORIES, STORES } from './src/data';
+import { CATEGORIES, GRADUATES, STORES } from './src/data';
 import {
   createReply,
   createForumPost,
@@ -35,6 +35,7 @@ const ROUTES = {
   forum: ['COMUNIDAD', 'Consultas técnicas'],
   postDetail: ['FORO TÉCNICO', 'Detalle de consulta'],
   create: ['FORO TÉCNICO', 'Nueva consulta'],
+  graduates: ['EGRESADOS', 'Directorio'],
   map: ['PUNTOS DE VENTA', 'Tiendas de insumos'],
   profile: ['CUENTA', 'Mi perfil'],
 };
@@ -264,6 +265,7 @@ function HomeScreen({ user, posts, navigate, openPost }) {
       <View style={styles.quickGrid}>
         {user.role === 'Agricultor' && <QuickCard icon="＋" label="Crear consulta" sub="Publica una duda" onPress={() => navigate('create')} />}
         <QuickCard icon="◌" label="Foro técnico" sub="Revisa las consultas" onPress={() => navigate('forum')} />
+        <QuickCard icon="♙" label="Egresados" sub="Busca apoyo" onPress={() => navigate('graduates')} />
         <QuickCard icon="⌖" label="Mapa" sub="Ubica puntos de venta" onPress={() => navigate('map')} />
       </View>
 
@@ -448,6 +450,59 @@ function PostDetailScreen({ user, post, navigate }) {
   );
 }
 
+function GraduatesScreen() {
+  const approvedGraduates = GRADUATES.filter((graduate) => graduate.status === 'approved');
+  const [specialty, setSpecialty] = useState('Todas');
+  const [message, setMessage] = useState('');
+  const specialties = useMemo(() => ['Todas', ...new Set(approvedGraduates.map((graduate) => graduate.specialty))], [approvedGraduates]);
+  const filtered = specialty === 'Todas' ? approvedGraduates : approvedGraduates.filter((graduate) => graduate.specialty === specialty);
+
+  const contactGraduate = async (graduate) => {
+    const subject = encodeURIComponent('Consulta desde AgroConecta');
+    const body = encodeURIComponent(`Hola ${graduate.name}, te contacto desde AgroConecta para pedir apoyo técnico.`);
+    const url = `mailto:${graduate.email}?subject=${subject}&body=${body}`;
+    try {
+      setMessage(`Abriendo correo para contactar a ${graduate.name}.`);
+      await Linking.openURL(url);
+    } catch {
+      setMessage('No fue posible abrir la aplicación de correo en este dispositivo.');
+    }
+  };
+
+  return (
+    <ScrollView contentContainerStyle={styles.screenContent}>
+      <View style={styles.infoCard}>
+        <Text style={styles.infoTitle}>Egresados validados</Text>
+        <Text style={styles.infoText}>Este directorio muestra contactos de apoyo técnico por especialidad. El contacto se realiza fuera de la app mediante correo electrónico.</Text>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
+        {specialties.map((item) => (
+          <Pressable key={item} accessibilityRole="button" accessibilityState={{ selected: specialty === item }} onPress={() => setSpecialty(item)} style={[styles.filterChip, specialty === item && styles.filterChipActive]}>
+            <Text style={[styles.filterChipText, specialty === item && styles.filterChipTextActive]}>{item}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+      {!!message && <Text style={styles.mapMessage}>{message}</Text>}
+      {filtered.map((graduate) => (
+        <View key={graduate.id} style={styles.graduateCard}>
+          <View style={styles.graduateAvatar}><Text style={styles.graduateAvatarText}>{graduate.name.charAt(0)}</Text></View>
+          <View style={styles.flex}>
+            <View style={styles.replyHeader}>
+              <Text style={styles.graduateName}>{graduate.name}</Text>
+              <Text style={styles.verifiedBadge}>Validado</Text>
+            </View>
+            <Text style={styles.graduateMeta}>{graduate.specialty} · {graduate.experienceYears} año(s) de experiencia</Text>
+            <Text style={styles.graduateSummary}>{graduate.summary}</Text>
+            <Pressable accessibilityRole="link" onPress={() => contactGraduate(graduate)} style={styles.contactButton}>
+              <Text style={styles.contactButtonText}>Contactar por correo</Text>
+            </Pressable>
+          </View>
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+
 function MapScreen() {
   const [selected, setSelected] = useState(STORES[0]);
   const [region, setRegion] = useState({ latitude: -18.4883, longitude: -70.2927, latitudeDelta: 0.2, longitudeDelta: 0.2 });
@@ -562,6 +617,7 @@ function MainApp({ user }) {
         {route === 'forum' && <ForumScreen user={user} posts={posts} navigate={navigate} openPost={openPost} />}
         {route === 'postDetail' && <PostDetailScreen user={user} post={selectedPost} navigate={navigate} />}
         {route === 'create' && <CreateScreen user={user} navigate={navigate} />}
+        {route === 'graduates' && <GraduatesScreen />}
         {route === 'map' && <MapScreen />}
         {route === 'profile' && <ProfileScreen user={user} />}
       </View>
@@ -638,8 +694,8 @@ const styles = StyleSheet.create({
   heroArt: { position: 'absolute', right: -8, bottom: -32, fontSize: 160, color: '#A9D1AF', transform: [{ rotate: '-22deg' }] },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 22, marginBottom: 11 },
   sectionTitle: { color: colors.ink, fontSize: 17, fontWeight: '900' },
-  quickGrid: { flexDirection: 'row', gap: 9 },
-  quickCard: { flex: 1, minHeight: 136, borderWidth: 1, borderColor: colors.line, borderRadius: 16, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center', padding: 9, ...shadows.small },
+  quickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 },
+  quickCard: { width: '48%', minHeight: 126, borderWidth: 1, borderColor: colors.line, borderRadius: 16, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center', padding: 9, ...shadows.small },
   quickIcon: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.green100, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
   quickIconText: { color: colors.green700, fontSize: 24, fontWeight: '700' },
   quickLabel: { color: colors.ink, fontSize: 13, lineHeight: 17, fontWeight: '900', textAlign: 'center' },
@@ -680,6 +736,17 @@ const styles = StyleSheet.create({
   replyBody: { color: '#536158', fontSize: 13, lineHeight: 19, marginTop: 9 },
   verifiedBadge: { overflow: 'hidden', color: colors.green800, backgroundColor: colors.green100, borderRadius: 99, paddingHorizontal: 8, paddingVertical: 4, fontSize: 10, fontWeight: '900' },
   replyForm: { marginTop: 8, borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 14 },
+  infoCard: { borderWidth: 1, borderColor: colors.line, backgroundColor: colors.green50, borderRadius: 16, padding: 15, marginBottom: 12 },
+  infoTitle: { color: colors.green900, fontSize: 17, fontWeight: '900' },
+  infoText: { color: colors.muted, fontSize: 13, lineHeight: 19, marginTop: 6 },
+  graduateCard: { flexDirection: 'row', gap: 12, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.white, borderRadius: 16, padding: 14, marginBottom: 10, ...shadows.small },
+  graduateAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.green700, alignItems: 'center', justifyContent: 'center' },
+  graduateAvatarText: { color: colors.white, fontSize: 18, fontWeight: '900' },
+  graduateName: { color: colors.ink, fontSize: 15, fontWeight: '900', flexShrink: 1 },
+  graduateMeta: { color: colors.green700, fontSize: 12, lineHeight: 17, fontWeight: '800', marginTop: 3 },
+  graduateSummary: { color: '#536158', fontSize: 13, lineHeight: 19, marginTop: 7 },
+  contactButton: { alignSelf: 'flex-start', minHeight: 38, borderRadius: 10, backgroundColor: colors.green700, justifyContent: 'center', paddingHorizontal: 12, marginTop: 10 },
+  contactButtonText: { color: colors.white, fontSize: 12, fontWeight: '900' },
   buttonRow: { flexDirection: 'row', gap: 9 },
   buttonHalf: { flex: 0.8 },
   buttonWide: { flex: 1.2 },
