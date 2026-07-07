@@ -20,6 +20,22 @@ service cloud.firestore {
         && request.resource.data.description.size() > 0
         && request.resource.data.category is string;
       allow update, delete: if signedIn() && resource.data.authorId == request.auth.uid;
+
+      match /replies/{replyId} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+          && exists(/databases/$(database)/documents/posts/$(postId))
+          && request.resource.data.keys().hasOnly(['body', 'authorId', 'authorName', 'authorRole', 'authorVerified', 'createdAt'])
+          && request.resource.data.authorId == request.auth.uid
+          && request.resource.data.body is string
+          && request.resource.data.body.size() > 0
+          && request.resource.data.body.size() <= 600
+          && request.resource.data.authorName is string
+          && request.resource.data.authorRole is string
+          && request.resource.data.authorVerified is bool
+          && request.resource.data.createdAt is timestamp;
+        allow update, delete: if false;
+      }
     }
   }
 }
