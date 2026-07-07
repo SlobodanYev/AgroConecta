@@ -19,10 +19,12 @@ import { initialWindowMetrics, SafeAreaProvider, SafeAreaView } from 'react-nati
 import StoreMap from './src/components/StoreMap';
 import { CATEGORIES, STORES } from './src/data';
 import {
+  createReply,
   createForumPost,
   registerUser,
   signInUser,
   signOutUser,
+  subscribeReplies,
   subscribePosts,
   subscribeSession,
 } from './src/services/backend';
@@ -31,6 +33,7 @@ import { colors, shadows } from './src/theme';
 const ROUTES = {
   home: ['AGROCONECTA', 'Inicio'],
   forum: ['COMUNIDAD', 'Consultas técnicas'],
+  postDetail: ['FORO TÉCNICO', 'Detalle de consulta'],
   create: ['FORO TÉCNICO', 'Nueva consulta'],
   map: ['PUNTOS DE VENTA', 'Tiendas de insumos'],
   profile: ['CUENTA', 'Mi perfil'],
@@ -228,21 +231,24 @@ function Header({ route, onHome }) {
   );
 }
 
-function PostCard({ post, compact = false }) {
+function PostCard({ post, compact = false, onPress }) {
   const date = post.createdAt ? new Date(post.createdAt) : new Date();
+  const Container = onPress ? Pressable : View;
+  const cardProps = onPress ? { accessibilityRole: 'button', onPress } : {};
   return (
-    <View style={styles.postCard}>
+    <Container {...cardProps} style={styles.postCard}>
       <View style={styles.postMeta}>
         <Text style={styles.tag}>{post.category}</Text>
         <Text style={styles.metaText}>{post.authorName || 'Usuario'} · {date.toLocaleDateString('es-CL')}</Text>
       </View>
       <Text style={styles.postTitle}>{post.title}</Text>
       {!compact && <Text style={styles.postDescription}>{post.description}</Text>}
-    </View>
+      {onPress && <Text style={styles.openPostHint}>Ver respuestas ›</Text>}
+    </Container>
   );
 }
 
-function HomeScreen({ user, posts, navigate }) {
+function HomeScreen({ user, posts, navigate, openPost }) {
   return (
     <ScrollView contentContainerStyle={styles.screenContent}>
       <View style={styles.heroCard}>
@@ -262,7 +268,7 @@ function HomeScreen({ user, posts, navigate }) {
       </View>
 
       <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>Consultas recientes</Text><Pressable accessibilityRole="button" accessibilityLabel="Ver todas las consultas" onPress={() => navigate('forum')}><Text style={styles.textLinkInline}>Ver todas</Text></Pressable></View>
-      {posts.slice(0, 2).map((post) => <PostCard key={post.id} post={post} compact />)}
+      {posts.slice(0, 2).map((post) => <PostCard key={post.id} post={post} compact onPress={() => openPost(post)} />)}
       {!posts.length && <EmptyState text="Todavía no hay consultas. Publica la primera." />}
     </ScrollView>
   );
@@ -282,7 +288,7 @@ function EmptyState({ text }) {
   return <View style={styles.emptyState}><Text style={styles.emptyIcon}>✓</Text><Text style={styles.emptyText}>{text}</Text></View>;
 }
 
-function ForumScreen({ user, posts, navigate }) {
+function ForumScreen({ user, posts, navigate, openPost }) {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('Todas');
   const categories = useMemo(() => ['Todas', ...new Set(posts.map((post) => post.category))], [posts]);
@@ -303,7 +309,7 @@ function ForumScreen({ user, posts, navigate }) {
             </Pressable>
           ))}
         </ScrollView>
-        {filtered.map((post) => <PostCard key={post.id} post={post} />)}
+        {filtered.map((post) => <PostCard key={post.id} post={post} onPress={() => openPost(post)} />)}
         {!filtered.length && <EmptyState text="No se encontraron consultas." />}
       </ScrollView>
       {user.role === 'Agricultor' && <View style={styles.stickyButton}><PrimaryButton onPress={() => navigate('create')}>＋ Nueva consulta</PrimaryButton></View>}
@@ -358,6 +364,85 @@ function CreateScreen({ user, navigate }) {
         <View style={styles.pendingCard}><Text style={styles.pendingIcon}>▧</Text><View style={styles.flex}><Text style={styles.pendingTitle}>Fotografías</Text><Text style={styles.pendingText}>Esta opción se agregará en una próxima versión.</Text></View></View>
         {!!message && <Text style={styles.errorText}>{message}</Text>}
         <View style={styles.buttonRow}><View style={styles.buttonHalf}><PrimaryButton secondary onPress={() => navigate('forum')}>Cancelar</PrimaryButton></View><View style={styles.buttonWide}><PrimaryButton onPress={publish} disabled={busy}>{busy ? 'Publicando…' : 'Publicar consulta'}</PrimaryButton></View></View>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+function ReplyCard({ reply }) {
+  const date = reply.createdAt ? new Date(reply.createdAt) : new Date();
+  return (
+    <View style={styles.replyCard}>
+      <View style={styles.replyHeader}>
+        <View style={styles.flex}>
+          <Text style={styles.replyAuthor}>{reply.authorName || 'Usuario'}</Text>
+          <Text style={styles.metaText}>{roleLabel(reply.authorRole)} · {date.toLocaleDateString('es-CL')}</Text>
+        </View>
+        {reply.authorVerified && <Text style={styles.verifiedBadge}>Profesional verificado</Text>}
+      </View>
+      <Text style={styles.replyBody}>{reply.body}</Text>
+    </View>
+  );
+}
+
+function PostDetailScreen({ user, post, navigate }) {
+  const [replies, setReplies] = useState([]);
+  const [body, setBody] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    if (!post?.id) return undefined;
+    return subscribeReplies(post.id, setReplies, (error) => setMessage(error.message));
+  }, [post?.id]);
+
+  const publishReply = async () => {
+    setMessage('');
+    if (!body.trim()) return setMessage('Escribe una respuesta antes de publicar.');
+    try {
+      setBusy(true);
+      await createReply({ postId: post.id, body: body.trim(), user });
+      setBody('');
+    } catch (error) {
+      setMessage(error.message || 'No fue posible publicar la respuesta.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!post) {
+    return (
+      <View style={styles.screenContent}>
+        <EmptyState text="No encontramos esta consulta. Vuelve al foro e inténtalo nuevamente." />
+        <PrimaryButton secondary onPress={() => navigate('forum')}>Volver al foro</PrimaryButton>
+      </View>
+    );
+  }
+
+  return (
+    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView contentContainerStyle={styles.screenContent} keyboardShouldPersistTaps="handled">
+        <Pressable accessibilityRole="button" onPress={() => navigate('forum')}><Text style={styles.textLinkInline}>‹ Volver al foro</Text></Pressable>
+        <PostCard post={post} />
+        <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>Respuestas técnicas</Text><Text style={styles.metaText}>{replies.length} respuesta(s)</Text></View>
+        {replies.map((reply) => <ReplyCard key={reply.id} reply={reply} />)}
+        {!replies.length && <EmptyState text="Aún no hay respuestas. Sé el primero en ayudar." />}
+        <View style={styles.replyForm}>
+          <Field label="Escribe una respuesta">
+            <TextInput
+              accessibilityLabel="Escribir respuesta técnica"
+              value={body}
+              onChangeText={setBody}
+              placeholder="Comparte una orientación clara para esta consulta..."
+              placeholderTextColor="#89938C"
+              multiline
+              maxLength={600}
+              style={[styles.input, styles.textarea]}
+            />
+          </Field>
+          {!!message && <Text style={styles.errorText}>{message}</Text>}
+          <PrimaryButton onPress={publishReply} disabled={busy}>{busy ? 'Publicando…' : 'Publicar respuesta'}</PrimaryButton>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -457,18 +542,25 @@ function BottomNav({ route, navigate, user }) {
 
 function MainApp({ user }) {
   const [route, setRoute] = useState('home');
+  const [selectedPostId, setSelectedPostId] = useState(null);
   const [posts, setPosts] = useState([]);
 
   useEffect(() => subscribePosts(setPosts, (error) => Alert.alert('Foro', error.message)), []);
-  const navigate = (next) => setRoute(next);
+  const navigate = (next, params = {}) => {
+    if (params.postId) setSelectedPostId(params.postId);
+    setRoute(next);
+  };
+  const openPost = (post) => navigate('postDetail', { postId: post.id });
+  const selectedPost = posts.find((post) => post.id === selectedPostId);
 
   return (
     <SafeAreaView style={styles.app}>
       <StatusBar style="dark" />
       <Header route={route} onHome={() => navigate('home')} />
       <View style={styles.mainArea}>
-        {route === 'home' && <HomeScreen user={user} posts={posts} navigate={navigate} />}
-        {route === 'forum' && <ForumScreen user={user} posts={posts} navigate={navigate} />}
+        {route === 'home' && <HomeScreen user={user} posts={posts} navigate={navigate} openPost={openPost} />}
+        {route === 'forum' && <ForumScreen user={user} posts={posts} navigate={navigate} openPost={openPost} />}
+        {route === 'postDetail' && <PostDetailScreen user={user} post={selectedPost} navigate={navigate} />}
         {route === 'create' && <CreateScreen user={user} navigate={navigate} />}
         {route === 'map' && <MapScreen />}
         {route === 'profile' && <ProfileScreen user={user} />}
@@ -559,6 +651,7 @@ const styles = StyleSheet.create({
   metaText: { color: colors.muted, fontSize: 11 },
   postTitle: { color: colors.green900, fontSize: 16, fontWeight: '900', marginTop: 8 },
   postDescription: { color: '#536158', fontSize: 13, lineHeight: 19, marginTop: 7 },
+  openPostHint: { color: colors.green700, fontSize: 12, fontWeight: '900', marginTop: 10 },
   searchInput: { height: 48, borderWidth: 1, borderColor: colors.line, borderRadius: 13, backgroundColor: colors.white, paddingHorizontal: 14, color: colors.ink },
   chipsRow: { gap: 7, paddingVertical: 13 },
   filterChip: { borderWidth: 1, borderColor: colors.line, backgroundColor: colors.white, borderRadius: 99, paddingVertical: 10, paddingHorizontal: 14 },
@@ -581,6 +674,12 @@ const styles = StyleSheet.create({
   pendingIcon: { color: colors.green700, fontSize: 24 },
   pendingTitle: { color: colors.green800, fontWeight: '900' },
   pendingText: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 3 },
+  replyCard: { borderWidth: 1, borderColor: colors.line, borderRadius: 14, backgroundColor: colors.white, padding: 13, marginBottom: 10 },
+  replyHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
+  replyAuthor: { color: colors.ink, fontSize: 14, fontWeight: '900' },
+  replyBody: { color: '#536158', fontSize: 13, lineHeight: 19, marginTop: 9 },
+  verifiedBadge: { overflow: 'hidden', color: colors.green800, backgroundColor: colors.green100, borderRadius: 99, paddingHorizontal: 8, paddingVertical: 4, fontSize: 10, fontWeight: '900' },
+  replyForm: { marginTop: 8, borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 14 },
   buttonRow: { flexDirection: 'row', gap: 9 },
   buttonHalf: { flex: 0.8 },
   buttonWide: { flex: 1.2 },

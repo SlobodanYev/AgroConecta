@@ -79,7 +79,8 @@ for (const item of postsData.documents || []) {
 }
 console.log('FIRESTORE: nombre Dylan aplicado al perfil y consultas demo');
 const demoTitle = 'Consulta de demostración: hojas de tomate';
-const alreadyExists = (postsData.documents || []).some((item) => item.fields?.title?.stringValue === demoTitle);
+let demoPostName = (postsData.documents || []).find((item) => item.fields?.title?.stringValue === demoTitle)?.name;
+const alreadyExists = Boolean(demoPostName);
 
 if (!alreadyExists) {
   const postResponse = await fetch(`${firestoreBase}/posts?key=${apiKey}`, {
@@ -98,9 +99,41 @@ if (!alreadyExists) {
     }),
   });
   if (!postResponse.ok) throw new Error(`PUBLICAR: HTTP ${postResponse.status} ${await postResponse.text()}`);
+  const postData = await postResponse.json();
+  demoPostName = postData.name;
   console.log('FORO: consulta demo publicada');
 } else {
   console.log('FORO: consulta demo ya existente');
+}
+
+const repliesUrl = `${firestoreBase.replace('/documents', '')}/documents/${demoPostName.split('/documents/')[1]}/replies?key=${apiKey}`;
+const replyBody = 'Respuesta de verificación: revisar humedad del suelo y estado de goteros antes de aplicar productos.';
+const repliesListResponse = await fetch(repliesUrl, { headers: { authorization: `Bearer ${token}` } });
+if (!repliesListResponse.ok) throw new Error(`RESPUESTAS: HTTP ${repliesListResponse.status} ${await repliesListResponse.text()}`);
+const repliesData = await repliesListResponse.json();
+const replyExists = (repliesData.documents || []).some((item) =>
+  item.fields?.body?.stringValue === replyBody && item.fields?.authorId?.stringValue === uid
+);
+
+if (!replyExists) {
+  const replyResponse = await fetch(repliesUrl, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      fields: {
+        body: { stringValue: replyBody },
+        authorId: { stringValue: uid },
+        authorName: { stringValue: 'Dylan' },
+        authorRole: { stringValue: 'Agricultor' },
+        authorVerified: { booleanValue: false },
+        createdAt: { timestampValue: new Date().toISOString() },
+      },
+    }),
+  });
+  if (!replyResponse.ok) throw new Error(`RESPUESTA: HTTP ${replyResponse.status} ${await replyResponse.text()}`);
+  console.log('FORO: respuesta demo publicada');
+} else {
+  console.log('FORO: respuesta demo ya existente');
 }
 
 const anonymousResponse = await fetch(`${firestoreBase}/posts?key=${apiKey}`);

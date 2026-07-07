@@ -50,6 +50,7 @@ async function profileForFirebaseUser(firebaseUser) {
     name: data.name || firebaseUser.displayName || 'Usuario',
     email: firebaseUser.email,
     role: data.role || 'Agricultor',
+    verified: data.verified === true,
   };
 }
 
@@ -166,6 +167,33 @@ export async function createForumPost({ title, description, category, user }) {
     authorId: user.uid,
     authorName: user.name,
     authorRole: user.role,
+    createdAt: serverTimestamp(),
+  });
+}
+
+export function subscribeReplies(postId, callback, onError = () => {}) {
+  if (!firebaseConfigured || !db || !postId) {
+    callback([]);
+    return () => {};
+  }
+  const repliesQuery = query(collection(db, 'posts', postId, 'replies'), orderBy('createdAt', 'asc'));
+  return onSnapshot(repliesQuery, (snapshot) => {
+    callback(snapshot.docs.map((item) => {
+      const data = item.data();
+      const createdAt = data.createdAt?.toDate?.();
+      return { id: item.id, ...data, createdAt: createdAt ? createdAt.toISOString() : null };
+    }));
+  }, () => onError(new Error('No fue posible sincronizar las respuestas del foro.')));
+}
+
+export async function createReply({ postId, body, user }) {
+  requireFirebase();
+  await addDoc(collection(db, 'posts', postId, 'replies'), {
+    body,
+    authorId: user.uid,
+    authorName: user.name,
+    authorRole: user.role,
+    authorVerified: user.role === 'Egresado' && user.verified === true,
     createdAt: serverTimestamp(),
   });
 }
