@@ -6,6 +6,7 @@ import {
   Image,
   KeyboardAvoidingView,
   Linking,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -234,10 +235,44 @@ function Header({ route, onHome }) {
   );
 }
 
+/**
+ * HU-05: Visor de imagen en pantalla completa.
+ * Recibe la URI seleccionada y la muestra dentro de un Modal.
+ * El usuario puede cerrar el visor con la X o con el botón Atrás de Android.
+ */
+function ImageViewer({ uri, visible, onClose }) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
+      <View style={styles.imageViewerOverlay}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Cerrar imagen"
+          onPress={onClose}
+          style={styles.imageViewerClose}
+        >
+          <Text style={styles.imageViewerCloseText}>×</Text>
+        </Pressable>
+
+        <Image source={{ uri }} style={styles.imageViewerImage} resizeMode="contain" />
+        <Text style={styles.imageViewerHint}>Presiona la X para cerrar</Text>
+      </View>
+    </Modal>
+  );
+}
+
 function PostCard({ post, compact = false, onPress }) {
+  // HU-05: guarda la imagen que el usuario presionó para abrirla en grande.
+  const [selectedImage, setSelectedImage] = useState(null);
   const date = post.createdAt ? new Date(post.createdAt) : new Date();
   const Container = onPress ? Pressable : View;
   const cardProps = onPress ? { accessibilityRole: 'button', onPress } : {};
+
   return (
     <Container {...cardProps} style={styles.postCard}>
       <View style={styles.postMeta}>
@@ -246,14 +281,39 @@ function PostCard({ post, compact = false, onPress }) {
       </View>
       <Text style={styles.postTitle}>{post.title}</Text>
       {!compact && <Text style={styles.postDescription}>{post.description}</Text>}
+
+      {/* HU-05: muestra las fotografías adjuntas como miniaturas horizontales. */}
       {!!post.imageUris?.length && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.postImagesRow}>
           {post.imageUris.map((uri, index) => (
-            <Image key={`${uri}-${index}`} source={{ uri }} style={styles.postImage} />
+            <Pressable
+              key={`${uri}-${index}`}
+              accessibilityRole="imagebutton"
+              accessibilityLabel={`Abrir fotografía ${index + 1}`}
+              onPress={(event) => {
+                // Evita que al tocar la foto también se abra inmediatamente la consulta.
+                event.stopPropagation?.();
+                setSelectedImage(uri);
+              }}
+              style={styles.postImageButton}
+            >
+              <Image source={{ uri }} style={styles.postImage} />
+              <View style={styles.expandImageBadge}>
+                <Text style={styles.expandImageBadgeText}>⛶</Text>
+              </View>
+            </Pressable>
           ))}
         </ScrollView>
       )}
+
       {onPress && <Text style={styles.openPostHint}>Ver respuestas ›</Text>}
+
+      {/* HU-05: abre la miniatura seleccionada en pantalla completa. */}
+      <ImageViewer
+        uri={selectedImage}
+        visible={Boolean(selectedImage)}
+        onClose={() => setSelectedImage(null)}
+      />
     </Container>
   );
 }
@@ -336,6 +396,10 @@ function CreateScreen({ user, navigate }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
+  /**
+   * HU-05: abre la galería, solicita permisos y permite seleccionar imágenes.
+   * Respeta el límite máximo de 3 fotografías por consulta.
+   */
   const chooseFromGallery = async () => {
     if (images.length >= 3) {
       Alert.alert('Límite alcanzado', 'Solo puedes adjuntar hasta 3 fotografías.');
@@ -361,6 +425,10 @@ function CreateScreen({ user, navigate }) {
     }
   };
 
+  /**
+   * HU-05: abre la cámara del dispositivo y agrega la fotografía capturada.
+   * Antes de abrirla, valida permisos y el límite máximo de imágenes.
+   */
   const takePhoto = async () => {
     if (images.length >= 3) {
       Alert.alert('Límite alcanzado', 'Solo puedes adjuntar hasta 3 fotografías.');
@@ -383,6 +451,10 @@ function CreateScreen({ user, navigate }) {
     }
   };
 
+  /**
+   * Publica la consulta y envía las URI locales de las imágenes a Firestore.
+   * Al finalizar, limpia el formulario y vuelve al foro.
+   */
   const publish = async () => {
     setMessage('');
     if (!title.trim()) return setMessage('Escribe un título.');
@@ -431,7 +503,11 @@ function CreateScreen({ user, navigate }) {
             {images.map((image, index) => (
               <View key={`${image.uri}-${index}`} style={styles.photoPreviewContainer}>
                 <Image source={{ uri: image.uri }} style={styles.photoPreview} />
-                <Pressable onPress={() => setImages((current) => current.filter((_, position) => position !== index))} style={styles.removePhotoButton}>
+                <Pressable
+                  // HU-05: elimina solo la fotografía seleccionada de la vista previa.
+                  onPress={() => setImages((current) => current.filter((_, position) => position !== index))}
+                  style={styles.removePhotoButton}
+                >
                   <Text style={styles.removePhotoText}>×</Text>
                 </Pressable>
               </View>
@@ -813,7 +889,15 @@ const styles = StyleSheet.create({
   removePhotoButton: { position: 'absolute', top: 5, right: 5, width: 25, height: 25, borderRadius: 13, backgroundColor: 'rgba(0,0,0,0.65)', alignItems: 'center', justifyContent: 'center' },
   removePhotoText: { color: colors.white, fontSize: 20, lineHeight: 22, fontWeight: '700' },
   postImagesRow: { marginTop: 12 },
-  postImage: { width: 120, height: 120, borderRadius: 12, marginRight: 10, backgroundColor: colors.green100 },
+  postImageButton: { position: 'relative', marginRight: 10 },
+  postImage: { width: 120, height: 120, borderRadius: 12, backgroundColor: colors.green100 },
+  expandImageBadge: { position: 'absolute', right: 6, bottom: 6, width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.65)' },
+  expandImageBadgeText: { color: colors.white, fontSize: 15, fontWeight: '900' },
+  imageViewerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 30 },
+  imageViewerImage: { width: '100%', height: '80%' },
+  imageViewerClose: { position: 'absolute', top: 45, right: 20, zIndex: 10, width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.2)' },
+  imageViewerCloseText: { color: colors.white, fontSize: 34, lineHeight: 37, fontWeight: '500' },
+  imageViewerHint: { color: colors.white, fontSize: 13, marginTop: 8, opacity: 0.8 },
   replyCard: { borderWidth: 1, borderColor: colors.line, borderRadius: 14, backgroundColor: colors.white, padding: 13, marginBottom: 10 },
   replyHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
   replyAuthor: { color: colors.ink, fontSize: 14, fontWeight: '900' },
