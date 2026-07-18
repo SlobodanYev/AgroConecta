@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Linking,
   Platform,
@@ -14,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
 import { initialWindowMetrics, SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import StoreMap from './src/components/StoreMap';
@@ -244,6 +246,13 @@ function PostCard({ post, compact = false, onPress }) {
       </View>
       <Text style={styles.postTitle}>{post.title}</Text>
       {!compact && <Text style={styles.postDescription}>{post.description}</Text>}
+      {!!post.imageUris?.length && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.postImagesRow}>
+          {post.imageUris.map((uri, index) => (
+            <Image key={`${uri}-${index}`} source={{ uri }} style={styles.postImage} />
+          ))}
+        </ScrollView>
+      )}
       {onPress && <Text style={styles.openPostHint}>Ver respuestas ›</Text>}
     </Container>
   );
@@ -323,8 +332,56 @@ function CreateScreen({ user, navigate }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
+  const [images, setImages] = useState([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+
+  const chooseFromGallery = async () => {
+    if (images.length >= 3) {
+      Alert.alert('Límite alcanzado', 'Solo puedes adjuntar hasta 3 fotografías.');
+      return;
+    }
+
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permiso requerido', 'Debes permitir el acceso a la galería.');
+      return;
+    }
+
+    const available = 3 - images.length;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: true,
+      selectionLimit: available,
+      quality: 0.75,
+    });
+
+    if (!result.canceled) {
+      setImages((current) => [...current, ...result.assets.slice(0, available)]);
+    }
+  };
+
+  const takePhoto = async () => {
+    if (images.length >= 3) {
+      Alert.alert('Límite alcanzado', 'Solo puedes adjuntar hasta 3 fotografías.');
+      return;
+    }
+
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permiso requerido', 'Debes permitir el acceso a la cámara.');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 0.75,
+    });
+
+    if (!result.canceled) {
+      setImages((current) => [...current, result.assets[0]]);
+    }
+  };
 
   const publish = async () => {
     setMessage('');
@@ -333,8 +390,8 @@ function CreateScreen({ user, navigate }) {
     if (!category) return setMessage('Selecciona un cultivo o tipo de problema.');
     try {
       setBusy(true);
-      await createForumPost({ title: title.trim(), description: description.trim(), category, user });
-      setTitle(''); setDescription(''); setCategory('');
+      await createForumPost({ title: title.trim(), description: description.trim(), category, imageUris: images.map((image) => image.uri), user });
+      setTitle(''); setDescription(''); setCategory(''); setImages([]);
       navigate('forum');
     } catch (error) {
       setMessage(error.message || 'No fue posible publicar.');
@@ -363,7 +420,24 @@ function CreateScreen({ user, navigate }) {
             ))}
           </View>
         </View>
-        <View style={styles.pendingCard}><Text style={styles.pendingIcon}>▧</Text><View style={styles.flex}><Text style={styles.pendingTitle}>Fotografías</Text><Text style={styles.pendingText}>Esta opción se agregará en una próxima versión.</Text></View></View>
+        <View style={styles.field}>
+          <Text style={styles.fieldLabel}>Fotografías ({images.length}/3)</Text>
+          <Text style={styles.pendingText}>Adjunta hasta 3 imágenes desde la cámara o galería.</Text>
+          <View style={styles.photoButtonRow}>
+            <Pressable onPress={takePhoto} style={styles.photoButton}><Text style={styles.photoButtonText}>Tomar foto</Text></Pressable>
+            <Pressable onPress={chooseFromGallery} style={styles.photoButton}><Text style={styles.photoButtonText}>Elegir galería</Text></Pressable>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {images.map((image, index) => (
+              <View key={`${image.uri}-${index}`} style={styles.photoPreviewContainer}>
+                <Image source={{ uri: image.uri }} style={styles.photoPreview} />
+                <Pressable onPress={() => setImages((current) => current.filter((_, position) => position !== index))} style={styles.removePhotoButton}>
+                  <Text style={styles.removePhotoText}>×</Text>
+                </Pressable>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
         {!!message && <Text style={styles.errorText}>{message}</Text>}
         <View style={styles.buttonRow}><View style={styles.buttonHalf}><PrimaryButton secondary onPress={() => navigate('forum')}>Cancelar</PrimaryButton></View><View style={styles.buttonWide}><PrimaryButton onPress={publish} disabled={busy}>{busy ? 'Publicando…' : 'Publicar consulta'}</PrimaryButton></View></View>
       </ScrollView>
@@ -730,6 +804,16 @@ const styles = StyleSheet.create({
   pendingIcon: { color: colors.green700, fontSize: 24 },
   pendingTitle: { color: colors.green800, fontWeight: '900' },
   pendingText: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 3 },
+
+  photoButtonRow: { flexDirection: 'row', gap: 10, marginTop: 12, marginBottom: 12 },
+  photoButton: { flex: 1, borderWidth: 1, borderColor: colors.green700, borderRadius: 10, paddingVertical: 11, alignItems: 'center', backgroundColor: colors.green50 },
+  photoButtonText: { color: colors.green800, fontWeight: '700' },
+  photoPreviewContainer: { position: 'relative', marginRight: 10 },
+  photoPreview: { width: 110, height: 110, borderRadius: 12, backgroundColor: colors.green100 },
+  removePhotoButton: { position: 'absolute', top: 5, right: 5, width: 25, height: 25, borderRadius: 13, backgroundColor: 'rgba(0,0,0,0.65)', alignItems: 'center', justifyContent: 'center' },
+  removePhotoText: { color: colors.white, fontSize: 20, lineHeight: 22, fontWeight: '700' },
+  postImagesRow: { marginTop: 12 },
+  postImage: { width: 120, height: 120, borderRadius: 12, marginRight: 10, backgroundColor: colors.green100 },
   replyCard: { borderWidth: 1, borderColor: colors.line, borderRadius: 14, backgroundColor: colors.white, padding: 13, marginBottom: 10 },
   replyHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
   replyAuthor: { color: colors.ink, fontSize: 14, fontWeight: '900' },
