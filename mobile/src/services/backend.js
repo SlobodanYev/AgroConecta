@@ -158,12 +158,13 @@ export function subscribePosts(callback, onError = () => {}) {
   }, () => onError(new Error('No fue posible sincronizar el foro con Firestore.')));
 }
 
-export async function createForumPost({ title, description, category, user }) {
+export async function createForumPost({ title, description, category, imageUris = [], user }) {
   requireFirebase();
   await addDoc(collection(db, 'posts'), {
     title,
     description,
     category,
+    imageUris: imageUris.slice(0, 3),
     authorId: user.uid,
     authorName: user.name,
     authorRole: user.role,
