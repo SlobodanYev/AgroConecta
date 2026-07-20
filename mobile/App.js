@@ -27,10 +27,12 @@ import {
   registerUser,
   signInUser,
   signOutUser,
+  subscribePostImages,
   subscribeReplies,
   subscribePosts,
   subscribeSession,
 } from './src/services/backend';
+import { prepareForumImage } from './src/services/images';
 import { colors, shadows } from './src/theme';
 
 const ROUTES = {
@@ -235,11 +237,6 @@ function Header({ route, onHome }) {
   );
 }
 
-/**
- * HU-05: Visor de imagen en pantalla completa.
- * Recibe la URI seleccionada y la muestra dentro de un Modal.
- * El usuario puede cerrar el visor con la X o con el botón Atrás de Android.
- */
 function ImageViewer({ uri, visible, onClose }) {
   return (
     <Modal
@@ -258,17 +255,16 @@ function ImageViewer({ uri, visible, onClose }) {
         >
           <Text style={styles.imageViewerCloseText}>×</Text>
         </Pressable>
-
-        <Image source={{ uri }} style={styles.imageViewerImage} resizeMode="contain" />
+        {!!uri && <Image source={{ uri }} style={styles.imageViewerImage} resizeMode="contain" />}
         <Text style={styles.imageViewerHint}>Presiona la X para cerrar</Text>
       </View>
     </Modal>
   );
 }
 
-function PostCard({ post, compact = false, onPress }) {
-  // HU-05: guarda la imagen que el usuario presionó para abrirla en grande.
+function PostCard({ post, images, compact = false, onPress }) {
   const [selectedImage, setSelectedImage] = useState(null);
+  const imageSources = images?.map((image) => image.dataUrl) || post.imageUris || [];
   const date = post.createdAt ? new Date(post.createdAt) : new Date();
   const Container = onPress ? Pressable : View;
   const cardProps = onPress ? { accessibilityRole: 'button', onPress } : {};
@@ -282,16 +278,14 @@ function PostCard({ post, compact = false, onPress }) {
       <Text style={styles.postTitle}>{post.title}</Text>
       {!compact && <Text style={styles.postDescription}>{post.description}</Text>}
 
-      {/* HU-05: muestra las fotografías adjuntas como miniaturas horizontales. */}
-      {!!post.imageUris?.length && (
+      {!!imageSources.length && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.postImagesRow}>
-          {post.imageUris.map((uri, index) => (
+          {imageSources.map((uri, index) => (
             <Pressable
               key={`${uri}-${index}`}
               accessibilityRole="imagebutton"
               accessibilityLabel={`Abrir fotografía ${index + 1}`}
               onPress={(event) => {
-                // Evita que al tocar la foto también se abra inmediatamente la consulta.
                 event.stopPropagation?.();
                 setSelectedImage(uri);
               }}
@@ -305,10 +299,12 @@ function PostCard({ post, compact = false, onPress }) {
           ))}
         </ScrollView>
       )}
+      {!imageSources.length && post.imageCount > 0 && (
+        <Text style={styles.photoCount}>📷 {post.imageCount} fotografía{post.imageCount === 1 ? '' : 's'} adjunta{post.imageCount === 1 ? '' : 's'}</Text>
+      )}
 
       {onPress && <Text style={styles.openPostHint}>Ver respuestas ›</Text>}
 
-      {/* HU-05: abre la miniatura seleccionada en pantalla completa. */}
       <ImageViewer
         uri={selectedImage}
         visible={Boolean(selectedImage)}
@@ -393,76 +389,78 @@ function CreateScreen({ user, navigate }) {
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
   const [images, setImages] = useState([]);
+  const [processingImages, setProcessingImages] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
-  /**
-   * HU-05: abre la galería, solicita permisos y permite seleccionar imágenes.
-   * Respeta el límite máximo de 3 fotografías por consulta.
-   */
+  const addAssets = async (assets) => {
+    const available = 3 - images.length;
+    if (available <= 0) return;
+    try {
+      setProcessingImages(true);
+      const prepared = [];
+      for (const asset of assets.slice(0, available)) {
+        prepared.push(await prepareForumImage(asset.uri));
+      }
+      setImages((current) => [...current, ...prepared].slice(0, 3));
+    } catch (error) {
+      Alert.alert('Fotografía', error.message || 'No fue posible preparar la fotografía.');
+    } finally {
+      setProcessingImages(false);
+    }
+  };
+
   const chooseFromGallery = async () => {
     if (images.length >= 3) {
       Alert.alert('Límite alcanzado', 'Solo puedes adjuntar hasta 3 fotografías.');
       return;
     }
-
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Permiso requerido', 'Debes permitir el acceso a la galería.');
-      return;
-    }
-
-    const available = 3 - images.length;
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsMultipleSelection: true,
-      selectionLimit: available,
-      quality: 0.75,
-    });
-
-    if (!result.canceled) {
-      setImages((current) => [...current, ...result.assets.slice(0, available)]);
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permiso requerido', 'Debes permitir el acceso a la galería.');
+        return;
+      }
+      const available = 3 - images.length;
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsMultipleSelection: true,
+        selectionLimit: available,
+        quality: 1,
+      });
+      if (!result.canceled) await addAssets(result.assets);
+    } catch {
+      Alert.alert('Galería', 'No fue posible abrir la galería del dispositivo.');
     }
   };
 
-  /**
-   * HU-05: abre la cámara del dispositivo y agrega la fotografía capturada.
-   * Antes de abrirla, valida permisos y el límite máximo de imágenes.
-   */
   const takePhoto = async () => {
     if (images.length >= 3) {
       Alert.alert('Límite alcanzado', 'Solo puedes adjuntar hasta 3 fotografías.');
       return;
     }
-
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Permiso requerido', 'Debes permitir el acceso a la cámara.');
-      return;
-    }
-
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['images'],
-      quality: 0.75,
-    });
-
-    if (!result.canceled) {
-      setImages((current) => [...current, result.assets[0]]);
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permiso requerido', 'Debes permitir el acceso a la cámara.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 1 });
+      if (!result.canceled) await addAssets(result.assets);
+    } catch {
+      Alert.alert('Cámara', 'No fue posible abrir la cámara del dispositivo.');
     }
   };
 
-  /**
-   * Publica la consulta y envía las URI locales de las imágenes a Firestore.
-   * Al finalizar, limpia el formulario y vuelve al foro.
-   */
   const publish = async () => {
     setMessage('');
     if (!title.trim()) return setMessage('Escribe un título.');
     if (!description.trim()) return setMessage('Describe el problema.');
     if (!category) return setMessage('Selecciona un cultivo o tipo de problema.');
+    if (processingImages) return setMessage('Espera a que las fotografías terminen de procesarse.');
     try {
       setBusy(true);
-      await createForumPost({ title: title.trim(), description: description.trim(), category, imageUris: images.map((image) => image.uri), user });
+      await createForumPost({ title: title.trim(), description: description.trim(), category, images: images.map((image) => image.dataUrl), user });
       setTitle(''); setDescription(''); setCategory(''); setImages([]);
       navigate('forum');
     } catch (error) {
@@ -494,17 +492,17 @@ function CreateScreen({ user, navigate }) {
         </View>
         <View style={styles.field}>
           <Text style={styles.fieldLabel}>Fotografías ({images.length}/3)</Text>
-          <Text style={styles.pendingText}>Adjunta hasta 3 imágenes desde la cámara o galería.</Text>
+          <Text style={styles.pendingText}>Adjunta hasta 3 imágenes desde la cámara o galería. La aplicación las ajusta para que carguen más rápido.</Text>
           <View style={styles.photoButtonRow}>
-            <Pressable onPress={takePhoto} style={styles.photoButton}><Text style={styles.photoButtonText}>Tomar foto</Text></Pressable>
-            <Pressable onPress={chooseFromGallery} style={styles.photoButton}><Text style={styles.photoButtonText}>Elegir galería</Text></Pressable>
+            <Pressable disabled={processingImages} onPress={takePhoto} style={[styles.photoButton, processingImages && styles.photoButtonDisabled]}><Text style={styles.photoButtonText}>Tomar foto</Text></Pressable>
+            <Pressable disabled={processingImages} onPress={chooseFromGallery} style={[styles.photoButton, processingImages && styles.photoButtonDisabled]}><Text style={styles.photoButtonText}>Elegir galería</Text></Pressable>
           </View>
+          {processingImages && <View style={styles.photoProgress}><ActivityIndicator color={colors.green700} /><Text style={styles.pendingText}>Preparando fotografía…</Text></View>}
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {images.map((image, index) => (
               <View key={`${image.uri}-${index}`} style={styles.photoPreviewContainer}>
                 <Image source={{ uri: image.uri }} style={styles.photoPreview} />
                 <Pressable
-                  // HU-05: elimina solo la fotografía seleccionada de la vista previa.
                   onPress={() => setImages((current) => current.filter((_, position) => position !== index))}
                   style={styles.removePhotoButton}
                 >
@@ -515,7 +513,7 @@ function CreateScreen({ user, navigate }) {
           </ScrollView>
         </View>
         {!!message && <Text style={styles.errorText}>{message}</Text>}
-        <View style={styles.buttonRow}><View style={styles.buttonHalf}><PrimaryButton secondary onPress={() => navigate('forum')}>Cancelar</PrimaryButton></View><View style={styles.buttonWide}><PrimaryButton onPress={publish} disabled={busy}>{busy ? 'Publicando…' : 'Publicar consulta'}</PrimaryButton></View></View>
+        <View style={styles.buttonRow}><View style={styles.buttonHalf}><PrimaryButton secondary onPress={() => navigate('forum')}>Cancelar</PrimaryButton></View><View style={styles.buttonWide}><PrimaryButton onPress={publish} disabled={busy || processingImages}>{busy ? 'Publicando…' : 'Publicar consulta'}</PrimaryButton></View></View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -539,13 +537,19 @@ function ReplyCard({ reply }) {
 
 function PostDetailScreen({ user, post, navigate }) {
   const [replies, setReplies] = useState([]);
+  const [postImages, setPostImages] = useState([]);
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
   useEffect(() => {
     if (!post?.id) return undefined;
-    return subscribeReplies(post.id, setReplies, (error) => setMessage(error.message));
+    const unsubscribeReplies = subscribeReplies(post.id, setReplies, (error) => setMessage(error.message));
+    const unsubscribeImages = subscribePostImages(post.id, setPostImages, (error) => setMessage(error.message));
+    return () => {
+      unsubscribeReplies();
+      unsubscribeImages();
+    };
   }, [post?.id]);
 
   const publishReply = async () => {
@@ -575,8 +579,8 @@ function PostDetailScreen({ user, post, navigate }) {
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.screenContent} keyboardShouldPersistTaps="handled">
         <Pressable accessibilityRole="button" onPress={() => navigate('forum')}><Text style={styles.textLinkInline}>‹ Volver al foro</Text></Pressable>
-        <PostCard post={post} />
-        <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>Respuestas técnicas</Text><Text style={styles.metaText}>{replies.length} respuesta(s)</Text></View>
+        <PostCard post={post} images={postImages} />
+        <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>Respuestas de la comunidad</Text><Text style={styles.metaText}>{replies.length} respuesta(s)</Text></View>
         {replies.map((reply) => <ReplyCard key={reply.id} reply={reply} />)}
         {!replies.length && <EmptyState text="Aún no hay respuestas. Sé el primero en ayudar." />}
         <View style={styles.replyForm}>
@@ -665,26 +669,43 @@ function MapScreen() {
     setMessage(`${store.name}: ${store.address}`);
   };
 
-  const locate = async () => {
+  const getCurrentCoordinates = async () => {
     try {
-      setMessage('Solicitando permiso de ubicación…');
       const permission = await Location.requestForegroundPermissionsAsync();
-      if (!permission.granted) return setMessage('No pudimos usar tu ubicación. Puedes activar el permiso en la configuración del teléfono.');
+      if (!permission.granted) {
+        setMessage('Activa el permiso de ubicación para calcular la ruta desde tu posición.');
+        return null;
+      }
       const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      const current = { latitude: location.coords.latitude, longitude: location.coords.longitude };
+      return { latitude: location.coords.latitude, longitude: location.coords.longitude };
+    } catch {
+      setMessage('No pudimos obtener tu ubicación. Revisa que el GPS del teléfono esté activado.');
+      return null;
+    }
+  };
+
+  const locate = async () => {
+    setMessage('Obteniendo tu ubicación…');
+    const current = await getCurrentCoordinates();
+    if (current) {
       setUserLocation(current);
       setRegion({ ...current, latitudeDelta: 0.08, longitudeDelta: 0.08 });
       setMessage('Mapa centrado en tu ubicación actual.');
-    } catch {
-      setMessage('No pudimos obtener tu ubicación. Revisa que la ubicación del teléfono esté activada.');
     }
   };
 
   const openRoute = async () => {
+    setMessage('Calculando el punto de partida…');
+    const current = await getCurrentCoordinates();
+    if (!current) return;
+
+    setUserLocation(current);
+    const origin = `${current.latitude},${current.longitude}`;
     const destination = `${selected.latitude},${selected.longitude}`;
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&travelmode=driving&dir_action=navigate`;
     try {
       await Linking.openURL(url);
+      setMessage(`Ruta solicitada hacia ${selected.name}. Google Maps mostrará la distancia y el tiempo estimado.`);
     } catch {
       setMessage('No fue posible abrir Google Maps. Verifica que el dispositivo tenga conexión a internet.');
     }
@@ -697,7 +718,7 @@ function MapScreen() {
       <Text style={styles.mapMessage}>{message}</Text>
       <View style={styles.routeCard}>
         <View style={styles.flex}><Text style={styles.routeTitle}>{selected.name}</Text><Text style={styles.routeAddress}>{selected.address}</Text></View>
-        <Pressable accessibilityRole="link" onPress={openRoute} style={styles.routeButton}><Text style={styles.routeButtonText}>Cómo llegar ↗</Text></Pressable>
+        <Pressable accessibilityRole="link" onPress={openRoute} style={styles.routeButton}><Text style={styles.routeButtonText}>Ver ruta y tiempo ↗</Text></Pressable>
       </View>
       {STORES.map((store) => (
         <Pressable key={store.id} accessibilityRole="button" accessibilityLabel={`${store.name}. ${store.address}`} accessibilityState={{ selected: selected.id === store.id }} onPress={() => selectStore(store)} style={[styles.storeCard, selected.id === store.id && styles.storeCardActive]}>
@@ -883,12 +904,15 @@ const styles = StyleSheet.create({
 
   photoButtonRow: { flexDirection: 'row', gap: 10, marginTop: 12, marginBottom: 12 },
   photoButton: { flex: 1, borderWidth: 1, borderColor: colors.green700, borderRadius: 10, paddingVertical: 11, alignItems: 'center', backgroundColor: colors.green50 },
+  photoButtonDisabled: { opacity: 0.45 },
   photoButtonText: { color: colors.green800, fontWeight: '700' },
+  photoProgress: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
   photoPreviewContainer: { position: 'relative', marginRight: 10 },
   photoPreview: { width: 110, height: 110, borderRadius: 12, backgroundColor: colors.green100 },
   removePhotoButton: { position: 'absolute', top: 5, right: 5, width: 25, height: 25, borderRadius: 13, backgroundColor: 'rgba(0,0,0,0.65)', alignItems: 'center', justifyContent: 'center' },
   removePhotoText: { color: colors.white, fontSize: 20, lineHeight: 22, fontWeight: '700' },
   postImagesRow: { marginTop: 12 },
+  photoCount: { color: colors.green700, fontSize: 12, fontWeight: '800', marginTop: 10 },
   postImageButton: { position: 'relative', marginRight: 10 },
   postImage: { width: 120, height: 120, borderRadius: 12, backgroundColor: colors.green100 },
   expandImageBadge: { position: 'absolute', right: 6, bottom: 6, width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.65)' },
