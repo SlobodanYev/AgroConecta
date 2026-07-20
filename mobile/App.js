@@ -3,8 +3,10 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Linking,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -14,6 +16,7 @@ import {
   View,
 } from 'react-native';
 import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
 import { initialWindowMetrics, SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import StoreMap from './src/components/StoreMap';
@@ -232,10 +235,44 @@ function Header({ route, onHome }) {
   );
 }
 
+/**
+ * HU-05: Visor de imagen en pantalla completa.
+ * Recibe la URI seleccionada y la muestra dentro de un Modal.
+ * El usuario puede cerrar el visor con la X o con el botón Atrás de Android.
+ */
+function ImageViewer({ uri, visible, onClose }) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
+      <View style={styles.imageViewerOverlay}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Cerrar imagen"
+          onPress={onClose}
+          style={styles.imageViewerClose}
+        >
+          <Text style={styles.imageViewerCloseText}>×</Text>
+        </Pressable>
+
+        <Image source={{ uri }} style={styles.imageViewerImage} resizeMode="contain" />
+        <Text style={styles.imageViewerHint}>Presiona la X para cerrar</Text>
+      </View>
+    </Modal>
+  );
+}
+
 function PostCard({ post, compact = false, onPress }) {
+  // HU-05: guarda la imagen que el usuario presionó para abrirla en grande.
+  const [selectedImage, setSelectedImage] = useState(null);
   const date = post.createdAt ? new Date(post.createdAt) : new Date();
   const Container = onPress ? Pressable : View;
   const cardProps = onPress ? { accessibilityRole: 'button', onPress } : {};
+
   return (
     <Container {...cardProps} style={styles.postCard}>
       <View style={styles.postMeta}>
@@ -244,7 +281,39 @@ function PostCard({ post, compact = false, onPress }) {
       </View>
       <Text style={styles.postTitle}>{post.title}</Text>
       {!compact && <Text style={styles.postDescription}>{post.description}</Text>}
+
+      {/* HU-05: muestra las fotografías adjuntas como miniaturas horizontales. */}
+      {!!post.imageUris?.length && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.postImagesRow}>
+          {post.imageUris.map((uri, index) => (
+            <Pressable
+              key={`${uri}-${index}`}
+              accessibilityRole="imagebutton"
+              accessibilityLabel={`Abrir fotografía ${index + 1}`}
+              onPress={(event) => {
+                // Evita que al tocar la foto también se abra inmediatamente la consulta.
+                event.stopPropagation?.();
+                setSelectedImage(uri);
+              }}
+              style={styles.postImageButton}
+            >
+              <Image source={{ uri }} style={styles.postImage} />
+              <View style={styles.expandImageBadge}>
+                <Text style={styles.expandImageBadgeText}>⛶</Text>
+              </View>
+            </Pressable>
+          ))}
+        </ScrollView>
+      )}
+
       {onPress && <Text style={styles.openPostHint}>Ver respuestas ›</Text>}
+
+      {/* HU-05: abre la miniatura seleccionada en pantalla completa. */}
+      <ImageViewer
+        uri={selectedImage}
+        visible={Boolean(selectedImage)}
+        onClose={() => setSelectedImage(null)}
+      />
     </Container>
   );
 }
@@ -323,9 +392,69 @@ function CreateScreen({ user, navigate }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
+  const [images, setImages] = useState([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
+  /**
+   * HU-05: abre la galería, solicita permisos y permite seleccionar imágenes.
+   * Respeta el límite máximo de 3 fotografías por consulta.
+   */
+  const chooseFromGallery = async () => {
+    if (images.length >= 3) {
+      Alert.alert('Límite alcanzado', 'Solo puedes adjuntar hasta 3 fotografías.');
+      return;
+    }
+
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permiso requerido', 'Debes permitir el acceso a la galería.');
+      return;
+    }
+
+    const available = 3 - images.length;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: true,
+      selectionLimit: available,
+      quality: 0.75,
+    });
+
+    if (!result.canceled) {
+      setImages((current) => [...current, ...result.assets.slice(0, available)]);
+    }
+  };
+
+  /**
+   * HU-05: abre la cámara del dispositivo y agrega la fotografía capturada.
+   * Antes de abrirla, valida permisos y el límite máximo de imágenes.
+   */
+  const takePhoto = async () => {
+    if (images.length >= 3) {
+      Alert.alert('Límite alcanzado', 'Solo puedes adjuntar hasta 3 fotografías.');
+      return;
+    }
+
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permiso requerido', 'Debes permitir el acceso a la cámara.');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 0.75,
+    });
+
+    if (!result.canceled) {
+      setImages((current) => [...current, result.assets[0]]);
+    }
+  };
+
+  /**
+   * Publica la consulta y envía las URI locales de las imágenes a Firestore.
+   * Al finalizar, limpia el formulario y vuelve al foro.
+   */
   const publish = async () => {
     setMessage('');
     if (!title.trim()) return setMessage('Escribe un título.');
@@ -333,8 +462,8 @@ function CreateScreen({ user, navigate }) {
     if (!category) return setMessage('Selecciona un cultivo o tipo de problema.');
     try {
       setBusy(true);
-      await createForumPost({ title: title.trim(), description: description.trim(), category, user });
-      setTitle(''); setDescription(''); setCategory('');
+      await createForumPost({ title: title.trim(), description: description.trim(), category, imageUris: images.map((image) => image.uri), user });
+      setTitle(''); setDescription(''); setCategory(''); setImages([]);
       navigate('forum');
     } catch (error) {
       setMessage(error.message || 'No fue posible publicar.');
@@ -363,7 +492,28 @@ function CreateScreen({ user, navigate }) {
             ))}
           </View>
         </View>
-        <View style={styles.pendingCard}><Text style={styles.pendingIcon}>▧</Text><View style={styles.flex}><Text style={styles.pendingTitle}>Fotografías</Text><Text style={styles.pendingText}>Esta opción se agregará en una próxima versión.</Text></View></View>
+        <View style={styles.field}>
+          <Text style={styles.fieldLabel}>Fotografías ({images.length}/3)</Text>
+          <Text style={styles.pendingText}>Adjunta hasta 3 imágenes desde la cámara o galería.</Text>
+          <View style={styles.photoButtonRow}>
+            <Pressable onPress={takePhoto} style={styles.photoButton}><Text style={styles.photoButtonText}>Tomar foto</Text></Pressable>
+            <Pressable onPress={chooseFromGallery} style={styles.photoButton}><Text style={styles.photoButtonText}>Elegir galería</Text></Pressable>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {images.map((image, index) => (
+              <View key={`${image.uri}-${index}`} style={styles.photoPreviewContainer}>
+                <Image source={{ uri: image.uri }} style={styles.photoPreview} />
+                <Pressable
+                  // HU-05: elimina solo la fotografía seleccionada de la vista previa.
+                  onPress={() => setImages((current) => current.filter((_, position) => position !== index))}
+                  style={styles.removePhotoButton}
+                >
+                  <Text style={styles.removePhotoText}>×</Text>
+                </Pressable>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
         {!!message && <Text style={styles.errorText}>{message}</Text>}
         <View style={styles.buttonRow}><View style={styles.buttonHalf}><PrimaryButton secondary onPress={() => navigate('forum')}>Cancelar</PrimaryButton></View><View style={styles.buttonWide}><PrimaryButton onPress={publish} disabled={busy}>{busy ? 'Publicando…' : 'Publicar consulta'}</PrimaryButton></View></View>
       </ScrollView>
@@ -730,6 +880,24 @@ const styles = StyleSheet.create({
   pendingIcon: { color: colors.green700, fontSize: 24 },
   pendingTitle: { color: colors.green800, fontWeight: '900' },
   pendingText: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 3 },
+
+  photoButtonRow: { flexDirection: 'row', gap: 10, marginTop: 12, marginBottom: 12 },
+  photoButton: { flex: 1, borderWidth: 1, borderColor: colors.green700, borderRadius: 10, paddingVertical: 11, alignItems: 'center', backgroundColor: colors.green50 },
+  photoButtonText: { color: colors.green800, fontWeight: '700' },
+  photoPreviewContainer: { position: 'relative', marginRight: 10 },
+  photoPreview: { width: 110, height: 110, borderRadius: 12, backgroundColor: colors.green100 },
+  removePhotoButton: { position: 'absolute', top: 5, right: 5, width: 25, height: 25, borderRadius: 13, backgroundColor: 'rgba(0,0,0,0.65)', alignItems: 'center', justifyContent: 'center' },
+  removePhotoText: { color: colors.white, fontSize: 20, lineHeight: 22, fontWeight: '700' },
+  postImagesRow: { marginTop: 12 },
+  postImageButton: { position: 'relative', marginRight: 10 },
+  postImage: { width: 120, height: 120, borderRadius: 12, backgroundColor: colors.green100 },
+  expandImageBadge: { position: 'absolute', right: 6, bottom: 6, width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.65)' },
+  expandImageBadgeText: { color: colors.white, fontSize: 15, fontWeight: '900' },
+  imageViewerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 30 },
+  imageViewerImage: { width: '100%', height: '80%' },
+  imageViewerClose: { position: 'absolute', top: 45, right: 20, zIndex: 10, width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.2)' },
+  imageViewerCloseText: { color: colors.white, fontSize: 34, lineHeight: 37, fontWeight: '500' },
+  imageViewerHint: { color: colors.white, fontSize: 13, marginTop: 8, opacity: 0.8 },
   replyCard: { borderWidth: 1, borderColor: colors.line, borderRadius: 14, backgroundColor: colors.white, padding: 13, marginBottom: 10 },
   replyHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
   replyAuthor: { color: colors.ink, fontSize: 14, fontWeight: '900' },

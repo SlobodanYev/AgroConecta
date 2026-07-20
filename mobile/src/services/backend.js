@@ -158,12 +158,18 @@ export function subscribePosts(callback, onError = () => {}) {
   }, () => onError(new Error('No fue posible sincronizar el foro con Firestore.')));
 }
 
-export async function createForumPost({ title, description, category, user }) {
+/**
+ * HU-05: crea una consulta y guarda las URI de sus fotografías.
+ * Se utiliza slice(0, 3) como validación adicional para no guardar más de 3 imágenes.
+ * En esta versión las URI son locales porque no se utiliza Firebase Storage.
+ */
+export async function createForumPost({ title, description, category, imageUris = [], user }) {
   requireFirebase();
   await addDoc(collection(db, 'posts'), {
     title,
     description,
     category,
+    imageUris: imageUris.slice(0, 3),
     authorId: user.uid,
     authorName: user.name,
     authorRole: user.role,
