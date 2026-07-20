@@ -30,6 +30,14 @@
         {
           "locationWhenInUsePermission": "AgroConecta usa tu ubicación mientras utilizas la app para mostrar tu posición y ayudarte a llegar a tiendas de insumos."
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "AgroConecta necesita acceso a tus fotografías para adjuntarlas a una consulta del foro.",
+          "cameraPermission": "AgroConecta necesita usar la cámara para tomar una fotografía y adjuntarla a una consulta.",
+          "microphonePermission": false
+        }
       ]
     ]
   }
