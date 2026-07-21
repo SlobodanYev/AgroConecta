@@ -1,4 +1,20 @@
 import fs from 'node:fs/promises';
+import { initializeApp } from 'firebase/app';
+import {
+  createUserWithEmailAndPassword,
+  getAuth,
+  signInWithEmailAndPassword,
+} from 'firebase/auth';
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  getFirestore,
+  serverTimestamp,
+  setDoc,
+} from 'firebase/firestore';
 
 const envText = await fs.readFile(new URL('../.env', import.meta.url), 'utf8');
 const env = Object.fromEntries(
@@ -11,132 +27,101 @@ const env = Object.fromEntries(
     }),
 );
 
-const apiKey = env.EXPO_PUBLIC_FIREBASE_API_KEY;
-const projectId = env.EXPO_PUBLIC_FIREBASE_PROJECT_ID;
-if (!apiKey || !projectId) throw new Error('Falta configurar mobile/.env');
+const firebaseConfig = {
+  apiKey: env.EXPO_PUBLIC_FIREBASE_API_KEY,
+  appId: env.EXPO_PUBLIC_FIREBASE_APP_ID,
+  authDomain: env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  messagingSenderId: env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  projectId: env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+};
+if (!firebaseConfig.apiKey || !firebaseConfig.projectId) throw new Error('Falta configurar mobile/.env');
 
+const app = initializeApp(firebaseConfig, `verify-${Date.now()}`);
+const auth = getAuth(app);
+const db = getFirestore(app);
 const email = 'dylan@agroconecta.cl';
 const password = 'dylan2026';
-const authBase = 'https://identitytoolkit.googleapis.com/v1/accounts';
 
-async function postJson(url, body, token) {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify(body),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(data?.error?.message || `HTTP ${response.status}`);
-    error.status = response.status;
-    throw error;
-  }
-  return data;
-}
-
-let authResult;
+let credential;
 try {
-  authResult = await postJson(`${authBase}:signInWithPassword?key=${apiKey}`, { email, password, returnSecureToken: true });
+  credential = await signInWithEmailAndPassword(auth, email, password);
   console.log('AUTH: cuenta demo existente e inicio de sesión correcto');
 } catch (error) {
-  if (error.message !== 'INVALID_LOGIN_CREDENTIALS') throw error;
-  authResult = await postJson(`${authBase}:signUp?key=${apiKey}`, { email, password, returnSecureToken: true });
+  if (error?.code !== 'auth/invalid-credential') throw error;
+  credential = await createUserWithEmailAndPassword(auth, email, password);
   console.log('AUTH: cuenta demo creada correctamente');
 }
 
-const token = authResult.idToken;
-const uid = authResult.localId;
-const firestoreBase = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
-const headers = { 'content-type': 'application/json', authorization: `Bearer ${token}` };
-
-const profileResponse = await fetch(`${firestoreBase}/users/${uid}?key=${apiKey}`, {
-  method: 'PATCH',
-  headers,
-  body: JSON.stringify({
-    fields: {
-      name: { stringValue: 'Dylan' },
-      email: { stringValue: email },
-      role: { stringValue: 'Agricultor' },
-      createdAt: { timestampValue: new Date().toISOString() },
-    },
-  }),
-});
-if (!profileResponse.ok) throw new Error(`PERFIL: HTTP ${profileResponse.status} ${await profileResponse.text()}`);
-console.log('FIRESTORE: perfil demo creado/actualizado');
-
-const postsResponse = await fetch(`${firestoreBase}/posts?key=${apiKey}`, { headers: { authorization: `Bearer ${token}` } });
-if (!postsResponse.ok) throw new Error(`FORO: HTTP ${postsResponse.status} ${await postsResponse.text()}`);
-const postsData = await postsResponse.json();
-
-for (const item of postsData.documents || []) {
-  if (item.fields?.authorId?.stringValue !== uid || item.fields?.authorName?.stringValue === 'Dylan') continue;
-  const authorResponse = await fetch(`https://firestore.googleapis.com/v1/${item.name}?updateMask.fieldPaths=authorName&key=${apiKey}`, {
-    method: 'PATCH',
-    headers,
-    body: JSON.stringify({ fields: { authorName: { stringValue: 'Dylan' } } }),
+const uid = credential.user.uid;
+const profileRef = doc(db, 'users', uid);
+let profileSnapshot = await getDoc(profileRef);
+if (!profileSnapshot.exists()) {
+  await setDoc(profileRef, {
+    name: 'Dylan',
+    email,
+    role: 'Agricultor',
+    verified: false,
+    verificationStatus: 'not_required',
+    createdAt: serverTimestamp(),
   });
-  if (!authorResponse.ok) throw new Error(`AUTOR: HTTP ${authorResponse.status} ${await authorResponse.text()}`);
+  profileSnapshot = await getDoc(profileRef);
+  console.log('FIRESTORE: perfil demo creado');
+} else {
+  console.log('FIRESTORE: perfil demo existente');
 }
-console.log('FIRESTORE: nombre Dylan aplicado al perfil y consultas demo');
-const demoTitle = 'Consulta de demostración: hojas de tomate';
-let demoPostName = (postsData.documents || []).find((item) => item.fields?.title?.stringValue === demoTitle)?.name;
-const alreadyExists = Boolean(demoPostName);
 
-if (!alreadyExists) {
-  const postResponse = await fetch(`${firestoreBase}/posts?key=${apiKey}`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      fields: {
-        title: { stringValue: demoTitle },
-        description: { stringValue: 'Las hojas inferiores presentan manchas amarillas desde hace cuatro días. ¿Qué manejo recomiendan?' },
-        category: { stringValue: 'Tomate' },
-        authorId: { stringValue: uid },
-        authorName: { stringValue: 'Dylan' },
-        authorRole: { stringValue: 'Agricultor' },
-        createdAt: { timestampValue: new Date().toISOString() },
-      },
-    }),
+const profile = profileSnapshot.data();
+const postsSnapshot = await getDocs(collection(db, 'posts'));
+const demoTitle = 'Consulta de demostración: hojas de tomate';
+let demoPost = postsSnapshot.docs.find((item) => item.data().title === demoTitle);
+
+if (!demoPost) {
+  const postRef = await addDoc(collection(db, 'posts'), {
+    title: demoTitle,
+    description: 'Las hojas inferiores presentan manchas amarillas desde hace cuatro días. ¿Qué manejo recomiendan?',
+    category: 'Tomate',
+    imageCount: 0,
+    authorId: uid,
+    authorName: profile.name,
+    authorRole: profile.role,
+    createdAt: serverTimestamp(),
   });
-  if (!postResponse.ok) throw new Error(`PUBLICAR: HTTP ${postResponse.status} ${await postResponse.text()}`);
-  const postData = await postResponse.json();
-  demoPostName = postData.name;
+  demoPost = await getDoc(postRef);
   console.log('FORO: consulta demo publicada');
 } else {
   console.log('FORO: consulta demo ya existente');
 }
 
-const repliesUrl = `${firestoreBase.replace('/documents', '')}/documents/${demoPostName.split('/documents/')[1]}/replies?key=${apiKey}`;
+const repliesRef = collection(db, 'posts', demoPost.id, 'replies');
+const repliesSnapshot = await getDocs(repliesRef);
 const replyBody = 'Respuesta de verificación: revisar humedad del suelo y estado de goteros antes de aplicar productos.';
-const repliesListResponse = await fetch(repliesUrl, { headers: { authorization: `Bearer ${token}` } });
-if (!repliesListResponse.ok) throw new Error(`RESPUESTAS: HTTP ${repliesListResponse.status} ${await repliesListResponse.text()}`);
-const repliesData = await repliesListResponse.json();
-const replyExists = (repliesData.documents || []).some((item) =>
-  item.fields?.body?.stringValue === replyBody && item.fields?.authorId?.stringValue === uid
-);
+const replyExists = repliesSnapshot.docs.some((item) => {
+  const reply = item.data();
+  return reply.body === replyBody && reply.authorId === uid;
+});
 
 if (!replyExists) {
-  const replyResponse = await fetch(repliesUrl, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      fields: {
-        body: { stringValue: replyBody },
-        authorId: { stringValue: uid },
-        authorName: { stringValue: 'Dylan' },
-        authorRole: { stringValue: 'Agricultor' },
-        authorVerified: { booleanValue: false },
-        createdAt: { timestampValue: new Date().toISOString() },
-      },
-    }),
+  await addDoc(repliesRef, {
+    body: replyBody,
+    authorId: uid,
+    authorName: profile.name,
+    authorRole: profile.role,
+    authorVerified: profile.role === 'Egresado'
+      && profile.verified === true
+      && profile.verificationStatus === 'approved',
+    createdAt: serverTimestamp(),
   });
-  if (!replyResponse.ok) throw new Error(`RESPUESTA: HTTP ${replyResponse.status} ${await replyResponse.text()}`);
   console.log('FORO: respuesta demo publicada');
 } else {
   console.log('FORO: respuesta demo ya existente');
 }
 
-const anonymousResponse = await fetch(`${firestoreBase}/posts?key=${apiKey}`);
-if (anonymousResponse.status !== 403) throw new Error(`REGLAS: se esperaba HTTP 403 anónimo y se obtuvo ${anonymousResponse.status}`);
+const firestoreBase = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents`;
+const anonymousResponse = await fetch(`${firestoreBase}/posts?key=${firebaseConfig.apiKey}`);
+if (anonymousResponse.status !== 403) {
+  throw new Error(`REGLAS: se esperaba HTTP 403 anónimo y se obtuvo ${anonymousResponse.status}`);
+}
 console.log('REGLAS: acceso anónimo bloqueado correctamente');
 console.log('VERIFICACIÓN FIREBASE COMPLETA');
+process.exit(0);
