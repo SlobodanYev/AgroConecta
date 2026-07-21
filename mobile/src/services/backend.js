@@ -16,6 +16,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  writeBatch,
 } from 'firebase/firestore';
 
 import { auth, db, firebaseConfigured } from '../firebase';
@@ -158,23 +159,53 @@ export function subscribePosts(callback, onError = () => {}) {
   }, () => onError(new Error('No fue posible sincronizar el foro con Firestore.')));
 }
 
-/**
- * HU-05: crea una consulta y guarda las URI de sus fotografías.
- * Se utiliza slice(0, 3) como validación adicional para no guardar más de 3 imágenes.
- * En esta versión las URI son locales porque no se utiliza Firebase Storage.
- */
-export async function createForumPost({ title, description, category, imageUris = [], user }) {
+export async function createForumPost({ title, description, category, images = [], user }) {
   requireFirebase();
-  await addDoc(collection(db, 'posts'), {
+  const safeImages = images.slice(0, 3);
+  const postRef = doc(collection(db, 'posts'));
+  const batch = writeBatch(db);
+
+  batch.set(postRef, {
     title,
     description,
     category,
-    imageUris: imageUris.slice(0, 3),
+    imageCount: safeImages.length,
     authorId: user.uid,
     authorName: user.name,
     authorRole: user.role,
     createdAt: serverTimestamp(),
   });
+
+  safeImages.forEach((dataUrl, position) => {
+    const imageRef = doc(db, 'posts', postRef.id, 'images', `image-${position}`);
+    batch.set(imageRef, {
+      dataUrl,
+      authorId: user.uid,
+      position,
+      createdAt: serverTimestamp(),
+    });
+  });
+
+  await batch.commit();
+  return postRef.id;
+}
+
+export function subscribePostImages(postId, callback, onError = () => {}) {
+  if (!firebaseConfigured || !db || !postId) {
+    callback([]);
+    return () => {};
+  }
+  const imagesRef = collection(db, 'posts', postId, 'images');
+  return onSnapshot(imagesRef, (snapshot) => {
+    const images = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+    images.sort((left, right) => {
+      const leftPosition = Number.isInteger(left.position) ? left.position : 99;
+      const rightPosition = Number.isInteger(right.position) ? right.position : 99;
+      if (leftPosition !== rightPosition) return leftPosition - rightPosition;
+      return (left.createdAt?.seconds || 0) - (right.createdAt?.seconds || 0);
+    });
+    callback(images);
+  }, () => onError(new Error('No fue posible cargar las fotografías de esta consulta.')));
 }
 
 export function subscribeReplies(postId, callback, onError = () => {}) {

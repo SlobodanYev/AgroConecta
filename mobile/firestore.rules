@@ -13,13 +13,45 @@ service cloud.firestore {
     match /posts/{postId} {
       allow read: if signedIn();
       allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+          'title', 'description', 'category', 'imageCount',
+          'authorId', 'authorName', 'authorRole', 'createdAt'
+        ])
         && request.resource.data.authorId == request.auth.uid
         && request.resource.data.title is string
         && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 80
         && request.resource.data.description is string
         && request.resource.data.description.size() > 0
-        && request.resource.data.category is string;
+        && request.resource.data.description.size() <= 600
+        && request.resource.data.category is string
+        && request.resource.data.imageCount is int
+        && request.resource.data.imageCount >= 0
+        && request.resource.data.imageCount <= 3
+        && request.resource.data.authorName is string
+        && request.resource.data.authorRole is string
+        && request.resource.data.createdAt is timestamp;
       allow update, delete: if signedIn() && resource.data.authorId == request.auth.uid;
+
+      match /images/{imageId} {
+        allow read: if signedIn()
+          && exists(/databases/$(database)/documents/posts/$(postId));
+        allow create: if signedIn()
+          && getAfter(/databases/$(database)/documents/posts/$(postId)).data.authorId == request.auth.uid
+          && imageId in ['image-0', 'image-1', 'image-2']
+          && request.resource.data.keys().hasOnly(['dataUrl', 'authorId', 'position', 'createdAt'])
+          && request.resource.data.authorId == request.auth.uid
+          && request.resource.data.position is int
+          && ((imageId == 'image-0' && request.resource.data.position == 0)
+            || (imageId == 'image-1' && request.resource.data.position == 1)
+            || (imageId == 'image-2' && request.resource.data.position == 2))
+          && request.resource.data.position < getAfter(/databases/$(database)/documents/posts/$(postId)).data.imageCount
+          && request.resource.data.dataUrl is string
+          && request.resource.data.dataUrl.size() > 0
+          && request.resource.data.dataUrl.size() <= 850000
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
 
       match /replies/{replyId} {
         allow read: if signedIn();
