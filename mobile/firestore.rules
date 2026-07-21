@@ -5,9 +5,138 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function currentUser() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isAdmin() {
+      return signedIn() && currentUser().data.role == 'Administrador';
+    }
+
     match /users/{userId} {
-      allow create, read, update: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly([
+          'name', 'email', 'role', 'verified', 'verificationStatus', 'createdAt'
+        ])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 2
+        && request.resource.data.name.size() <= 80
+        && request.resource.data.email is string
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.email.size() <= 120
+        && request.resource.data.role in ['Agricultor', 'Egresado']
+        && request.resource.data.verified == false
+        && ((request.resource.data.role == 'Agricultor'
+              && request.resource.data.verificationStatus == 'not_required')
+          || (request.resource.data.role == 'Egresado'
+              && request.resource.data.verificationStatus == 'draft'))
+        && request.resource.data.createdAt == request.time;
+
+      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+
+      allow update: if signedIn()
+        && request.auth.uid == userId
+        && resource.data.role == 'Egresado'
+        && resource.data.verificationStatus in ['draft', 'approved', 'rejected']
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'rut', 'university', 'degree', 'graduationYear', 'degreeFolio',
+          'specialty', 'experienceYears', 'contactEmail',
+          'professionalDescription', 'verified', 'verificationStatus',
+          'rejectionReason', 'submittedAt', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'rut', 'university', 'degree', 'graduationYear', 'degreeFolio',
+          'specialty', 'experienceYears', 'contactEmail',
+          'professionalDescription'
+        ])
+        && request.resource.data.rut is string
+        && request.resource.data.rut.matches('^[0-9]{7,8}-[0-9K]$')
+        && request.resource.data.university is string
+        && request.resource.data.university.size() > 0
+        && request.resource.data.university.size() <= 100
+        && request.resource.data.degree is string
+        && request.resource.data.degree.size() > 0
+        && request.resource.data.degree.size() <= 100
+        && request.resource.data.graduationYear is int
+        && request.resource.data.graduationYear >= 1950
+        && request.resource.data.graduationYear <= 2100
+        && request.resource.data.degreeFolio is string
+        && request.resource.data.degreeFolio.size() > 0
+        && request.resource.data.degreeFolio.size() <= 50
+        && request.resource.data.specialty is string
+        && request.resource.data.specialty.size() > 0
+        && request.resource.data.specialty.size() <= 60
+        && request.resource.data.experienceYears is int
+        && request.resource.data.experienceYears >= 0
+        && request.resource.data.experienceYears <= 60
+        && request.resource.data.contactEmail is string
+        && request.resource.data.contactEmail.size() > 3
+        && request.resource.data.contactEmail.size() <= 100
+        && request.resource.data.professionalDescription is string
+        && request.resource.data.professionalDescription.size() >= 20
+        && request.resource.data.professionalDescription.size() <= 400
+        && request.resource.data.verified == false
+        && request.resource.data.verificationStatus == 'pending'
+        && request.resource.data.rejectionReason == ''
+        && request.resource.data.submittedAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/graduateProfiles/$(userId)) == null;
+
+      allow update: if isAdmin()
+        && resource.data.role == 'Egresado'
+        && resource.data.verificationStatus == 'pending'
+        && resource.data.rut is string
+        && resource.data.rut.matches('^[0-9]{7,8}-[0-9K]$')
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'verified', 'verificationStatus', 'rejectionReason',
+          'reviewerId', 'reviewedAt'
+        ])
+        && request.resource.data.verificationStatus in ['approved', 'rejected']
+        && request.resource.data.verified == (request.resource.data.verificationStatus == 'approved')
+        && request.resource.data.rejectionReason is string
+        && request.resource.data.rejectionReason.size() <= 180
+        && ((request.resource.data.verificationStatus == 'approved'
+              && request.resource.data.rejectionReason == '')
+          || (request.resource.data.verificationStatus == 'rejected'
+              && request.resource.data.rejectionReason.size() > 0))
+        && request.resource.data.reviewerId == request.auth.uid
+        && request.resource.data.reviewedAt == request.time
+        && ((request.resource.data.verificationStatus == 'approved'
+              && getAfter(/databases/$(database)/documents/graduateProfiles/$(userId)) != null)
+          || (request.resource.data.verificationStatus == 'rejected'
+              && getAfter(/databases/$(database)/documents/graduateProfiles/$(userId)) == null));
+
       allow delete: if false;
+    }
+
+    match /graduateProfiles/{profileId} {
+      allow read: if signedIn();
+      allow create, update: if isAdmin()
+        && getAfter(/databases/$(database)/documents/users/$(profileId)).data.role == 'Egresado'
+        && getAfter(/databases/$(database)/documents/users/$(profileId)).data.verificationStatus == 'approved'
+        && request.resource.data.keys().hasOnly([
+          'name', 'specialty', 'experienceYears', 'contactEmail',
+          'summary', 'verified', 'updatedAt'
+        ])
+        && request.resource.data.name is string
+        && request.resource.data.specialty is string
+        && request.resource.data.experienceYears is int
+        && request.resource.data.contactEmail is string
+        && request.resource.data.summary is string
+        && request.resource.data.verified == true
+        && request.resource.data.name == getAfter(/databases/$(database)/documents/users/$(profileId)).data.name
+        && request.resource.data.specialty == getAfter(/databases/$(database)/documents/users/$(profileId)).data.specialty
+        && request.resource.data.experienceYears == getAfter(/databases/$(database)/documents/users/$(profileId)).data.experienceYears
+        && request.resource.data.contactEmail == getAfter(/databases/$(database)/documents/users/$(profileId)).data.contactEmail
+        && request.resource.data.summary == getAfter(/databases/$(database)/documents/users/$(profileId)).data.professionalDescription
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if (isAdmin()
+          && getAfter(/databases/$(database)/documents/users/$(profileId)).data.verificationStatus == 'rejected')
+        || (signedIn()
+          && request.auth.uid == profileId
+          && getAfter(/databases/$(database)/documents/users/$(profileId)).data.verificationStatus == 'pending');
     }
 
     match /posts/{postId} {
@@ -28,10 +157,11 @@ service cloud.firestore {
         && request.resource.data.imageCount is int
         && request.resource.data.imageCount >= 0
         && request.resource.data.imageCount <= 3
-        && request.resource.data.authorName is string
-        && request.resource.data.authorRole is string
-        && request.resource.data.createdAt is timestamp;
-      allow update, delete: if signedIn() && resource.data.authorId == request.auth.uid;
+        && request.resource.data.authorName == currentUser().data.name
+        && request.resource.data.authorRole == currentUser().data.role
+        && request.resource.data.createdAt == request.time;
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.authorId == request.auth.uid;
 
       match /images/{imageId} {
         allow read: if signedIn()
@@ -54,7 +184,8 @@ service cloud.firestore {
       }
 
       match /replies/{replyId} {
-        allow read: if signedIn();
+        allow read: if signedIn()
+          && exists(/databases/$(database)/documents/posts/$(postId));
         allow create: if signedIn()
           && exists(/databases/$(database)/documents/posts/$(postId))
           && request.resource.data.keys().hasOnly(['body', 'authorId', 'authorName', 'authorRole', 'authorVerified', 'createdAt'])
@@ -62,10 +193,14 @@ service cloud.firestore {
           && request.resource.data.body is string
           && request.resource.data.body.size() > 0
           && request.resource.data.body.size() <= 600
-          && request.resource.data.authorName is string
-          && request.resource.data.authorRole is string
-          && request.resource.data.authorVerified is bool
-          && request.resource.data.createdAt is timestamp;
+          && request.resource.data.authorName == currentUser().data.name
+          && request.resource.data.authorRole == currentUser().data.role
+          && request.resource.data.authorVerified == (
+            currentUser().data.role == 'Egresado'
+            && currentUser().data.verified == true
+            && currentUser().data.verificationStatus == 'approved'
+          )
+          && request.resource.data.createdAt == request.time;
         allow update, delete: if false;
       }
     }

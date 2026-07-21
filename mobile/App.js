@@ -20,14 +20,18 @@ import * as ImagePicker from 'expo-image-picker';
 import { initialWindowMetrics, SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import StoreMap from './src/components/StoreMap';
-import { CATEGORIES, GRADUATES, STORES } from './src/data';
+import { CATEGORIES, STORES } from './src/data';
 import {
   createReply,
   createForumPost,
   registerUser,
+  reviewGraduateProfile,
   signInUser,
   signOutUser,
+  submitGraduateProfile,
+  subscribeApprovedGraduates,
   subscribePostImages,
+  subscribePendingGraduates,
   subscribeReplies,
   subscribePosts,
   subscribeSession,
@@ -46,10 +50,37 @@ const ROUTES = {
 };
 
 function roleLabel(role) {
-  return role === 'Egresado' ? 'Egresado/a de Agronomía' : 'Agricultor/a';
+  if (role === 'Administrador') return 'Administrador/a';
+  return role === 'Egresado' ? 'Cuenta de egresado/a' : 'Agricultor/a';
 }
 
-function Field({ label, multiline = false, children, ...props }) {
+function normalizeChileanRut(value = '') {
+  return value.replace(/[.\s]/g, '').toUpperCase();
+}
+
+function isValidChileanRut(value) {
+  const match = normalizeChileanRut(value).match(/^(\d{7,8})-([0-9K])$/);
+  if (!match) return false;
+  const [, body, verifier] = match;
+  let sum = 0;
+  let multiplier = 2;
+  for (let index = body.length - 1; index >= 0; index -= 1) {
+    sum += Number(body[index]) * multiplier;
+    multiplier = multiplier === 7 ? 2 : multiplier + 1;
+  }
+  const result = 11 - (sum % 11);
+  const expected = result === 11 ? '0' : result === 10 ? 'K' : String(result);
+  return verifier === expected;
+}
+
+function formatChileanRut(value) {
+  const normalized = normalizeChileanRut(value);
+  const [body, verifier] = normalized.split('-');
+  if (!body || !verifier) return normalized || 'No informado';
+  return `${body.replace(/\B(?=(\d{3})+(?!\d))/g, '.')}-${verifier}`;
+}
+
+function Field({ label, multiline = false, disabled = false, children, ...props }) {
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
@@ -57,9 +88,10 @@ function Field({ label, multiline = false, children, ...props }) {
         <TextInput
           {...props}
           accessibilityLabel={props.accessibilityLabel || label}
+          editable={!disabled && props.editable !== false}
           multiline={multiline}
           placeholderTextColor="#89938C"
-          style={[styles.input, multiline && styles.textarea]}
+          style={[styles.input, multiline && styles.textarea, disabled && styles.inputDisabled]}
         />
       )}
     </View>
@@ -172,6 +204,7 @@ function AuthScreen() {
                   </Pressable>
                 ))}
               </View>
+              {role === 'Egresado' && <Text style={styles.formHelp}>La cuenta deberá ser revisada antes de aparecer como egresado validado.</Text>}
             </View>
           </>
         )}
@@ -326,7 +359,7 @@ function HomeScreen({ user, posts, navigate, openPost }) {
         <View style={styles.heroCopy}>
           <Text style={styles.heroKicker}>Bienvenido,</Text>
           <Text style={styles.heroTitle}>{user.name?.split(' ')[0] || 'Agricultor'}</Text>
-          <Text style={styles.heroText}>{user.role === 'Egresado' ? 'Revisa las consultas técnicas de la comunidad.' : 'Encuentra apoyo para tus cultivos y puntos de venta de la zona.'}</Text>
+          <Text style={styles.heroText}>{user.role === 'Administrador' ? 'Revisa las solicitudes de validación pendientes.' : user.role === 'Egresado' ? 'Revisa las consultas de la comunidad.' : 'Encuentra apoyo para tus cultivos y puntos de venta de la zona.'}</Text>
         </View>
         <Text style={styles.heroArt}>♧</Text>
       </View>
@@ -528,14 +561,17 @@ function CreateScreen({ user, navigate }) {
 
 function ReplyCard({ reply }) {
   const date = reply.createdAt ? new Date(reply.createdAt) : new Date();
+  const replyRole = reply.authorRole === 'Egresado'
+    ? (reply.authorVerified ? 'Egresado/a validado/a' : 'Cuenta de egresado/a sin validar')
+    : roleLabel(reply.authorRole);
   return (
     <View style={styles.replyCard}>
       <View style={styles.replyHeader}>
         <View style={styles.flex}>
           <Text style={styles.replyAuthor}>{reply.authorName || 'Usuario'}</Text>
-          <Text style={styles.metaText}>{roleLabel(reply.authorRole)} · {date.toLocaleDateString('es-CL')}</Text>
+          <Text style={styles.metaText}>{replyRole} · {date.toLocaleDateString('es-CL')}</Text>
         </View>
-        {reply.authorVerified && <Text style={styles.verifiedBadge}>Profesional verificado</Text>}
+        {reply.authorVerified && <Text style={styles.verifiedBadge}>Validado al responder</Text>}
       </View>
       <Text style={styles.replyBody}>{reply.body}</Text>
     </View>
@@ -612,16 +648,21 @@ function PostDetailScreen({ user, post, navigate }) {
 }
 
 function GraduatesScreen() {
-  const approvedGraduates = GRADUATES.filter((graduate) => graduate.status === 'approved');
+  const [approvedGraduates, setApprovedGraduates] = useState([]);
   const [specialty, setSpecialty] = useState('Todas');
   const [message, setMessage] = useState('');
   const specialties = useMemo(() => ['Todas', ...new Set(approvedGraduates.map((graduate) => graduate.specialty))], [approvedGraduates]);
   const filtered = specialty === 'Todas' ? approvedGraduates : approvedGraduates.filter((graduate) => graduate.specialty === specialty);
 
+  useEffect(() => subscribeApprovedGraduates(
+    setApprovedGraduates,
+    (error) => setMessage(error.message),
+  ), []);
+
   const contactGraduate = async (graduate) => {
     const subject = encodeURIComponent('Consulta desde AgroConecta');
     const body = encodeURIComponent(`Hola ${graduate.name}, te contacto desde AgroConecta para pedir apoyo técnico.`);
-    const url = `mailto:${graduate.email}?subject=${subject}&body=${body}`;
+    const url = `mailto:${graduate.contactEmail}?subject=${subject}&body=${body}`;
     try {
       setMessage(`Abriendo correo para contactar a ${graduate.name}.`);
       await Linking.openURL(url);
@@ -634,7 +675,7 @@ function GraduatesScreen() {
     <ScrollView contentContainerStyle={styles.screenContent}>
       <View style={styles.infoCard}>
         <Text style={styles.infoTitle}>Egresados validados</Text>
-        <Text style={styles.infoText}>Este directorio muestra contactos de apoyo técnico por especialidad. El contacto se realiza fuera de la app mediante correo electrónico.</Text>
+        <Text style={styles.infoText}>Solo aparecen perfiles revisados por una cuenta administradora. Los antecedentes privados utilizados en la revisión no se muestran en este directorio.</Text>
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
         {specialties.map((item) => (
@@ -660,6 +701,7 @@ function GraduatesScreen() {
           </View>
         </View>
       ))}
+      {!filtered.length && <EmptyState text="Todavía no hay egresados aprobados para este filtro." />}
     </ScrollView>
   );
 }
@@ -757,7 +799,179 @@ function MapScreen() {
   );
 }
 
+const VERIFICATION_COPY = {
+  draft: ['Perfil sin enviar', 'Completa tus antecedentes y envíalos para revisión.'],
+  pending: ['Solicitud en revisión', 'Tu solicitud fue recibida y se encuentra en proceso de revisión. Mientras tanto, puedes seguir utilizando las demás funciones de AgroConecta.'],
+  approved: ['Perfil aprobado', 'Tu ficha pública ya puede aparecer en el directorio.'],
+  rejected: ['Solicitud rechazada', 'Corrige los antecedentes indicados y vuelve a enviarlos.'],
+};
+
+function GraduateProfileScreen({ user }) {
+  const [form, setForm] = useState({
+    rut: user.rut,
+    university: user.university,
+    degree: user.degree,
+    graduationYear: String(user.graduationYear || ''),
+    degreeFolio: user.degreeFolio,
+    specialty: user.specialty,
+    experienceYears: String(user.experienceYears ?? ''),
+    contactEmail: user.contactEmail,
+    professionalDescription: user.professionalDescription,
+  });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    setForm({
+      rut: user.rut,
+      university: user.university,
+      degree: user.degree,
+      graduationYear: String(user.graduationYear || ''),
+      degreeFolio: user.degreeFolio,
+      specialty: user.specialty,
+      experienceYears: String(user.experienceYears ?? ''),
+      contactEmail: user.contactEmail,
+      professionalDescription: user.professionalDescription,
+    });
+  }, [user.uid, user.verificationStatus, user.updatedAt]);
+
+  const update = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+  const statusCopy = VERIFICATION_COPY[user.verificationStatus] || VERIFICATION_COPY.draft;
+  const isPending = user.verificationStatus === 'pending';
+
+  const submit = async () => {
+    setMessage('');
+    const required = [form.rut, form.university, form.degree, form.graduationYear, form.degreeFolio, form.specialty, form.experienceYears, form.contactEmail, form.professionalDescription];
+    if (required.some((value) => !String(value).trim())) return setMessage('Completa todos los campos del perfil profesional.');
+    if (!isValidChileanRut(form.rut)) return setMessage('Ingresa un RUT chileno válido con su dígito verificador.');
+    const graduationYear = Number(form.graduationYear);
+    const experienceYears = Number(form.experienceYears);
+    const currentYear = new Date().getFullYear();
+    if (!Number.isInteger(graduationYear) || graduationYear < 1950 || graduationYear > currentYear) return setMessage('Ingresa un año de titulación válido.');
+    if (!Number.isInteger(experienceYears) || experienceYears < 0 || experienceYears > 60) return setMessage('Los años de experiencia deben estar entre 0 y 60.');
+    if (!/^\S+@\S+\.\S+$/.test(form.contactEmail.trim())) return setMessage('Ingresa un correo de contacto válido.');
+    if (form.professionalDescription.trim().length < 20) return setMessage('Escribe una descripción profesional de al menos 20 caracteres.');
+
+    try {
+      setBusy(true);
+      await submitGraduateProfile({
+        userId: user.uid,
+        profile: {
+          rut: normalizeChileanRut(form.rut),
+          university: form.university.trim(),
+          degree: form.degree.trim(),
+          graduationYear,
+          degreeFolio: form.degreeFolio.trim(),
+          specialty: form.specialty.trim(),
+          experienceYears,
+          contactEmail: form.contactEmail.trim().toLowerCase(),
+          professionalDescription: form.professionalDescription.trim(),
+        },
+      });
+      setMessage('Perfil enviado. Quedó pendiente de validación.');
+    } catch (error) {
+      setMessage(error.message || 'No fue posible enviar el perfil.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView contentContainerStyle={styles.screenContent} keyboardShouldPersistTaps="handled">
+        <View style={styles.profileCard}>
+          <View style={styles.avatar}><Text style={styles.avatarText}>{user.name?.charAt(0)?.toUpperCase() || 'E'}</Text></View>
+          <Text style={styles.profileName}>{user.name}</Text>
+          <Text style={styles.profileRole}>{roleLabel(user.role)}</Text>
+          <Text style={styles.profileEmail}>{user.email}</Text>
+        </View>
+        <View style={[styles.verificationCard, user.verificationStatus === 'approved' && styles.verificationApproved]}>
+          <Text style={styles.verificationTitle}>{statusCopy[0]}</Text>
+          <Text style={styles.verificationText}>{statusCopy[1]}</Text>
+          {user.verificationStatus === 'rejected' && !!user.rejectionReason && <Text style={styles.rejectionText}>Motivo: {user.rejectionReason}</Text>}
+        </View>
+        <Text style={styles.sectionTitle}>Antecedentes profesionales</Text>
+        <Text style={styles.formHelp}>Estos datos se usan para la revisión. El RUT, el folio y la formación no se publican en el directorio.</Text>
+        <Field disabled={isPending} label="RUT *" value={form.rut} onChangeText={(value) => update('rut', value.replace(/[^0-9kK.\-]/g, '').slice(0, 12))} placeholder="Ej.: 12.345.678-5" autoCapitalize="characters" maxLength={12} />
+        <Field disabled={isPending} label="Institución de formación *" value={form.university} onChangeText={(value) => update('university', value)} placeholder="Ej.: Universidad de Tarapacá" maxLength={100} />
+        <Field disabled={isPending} label="Título o grado *" value={form.degree} onChangeText={(value) => update('degree', value)} placeholder="Ej.: Ingeniería Agronómica" maxLength={100} />
+        <Field disabled={isPending} label="Año de titulación *" value={form.graduationYear} onChangeText={(value) => update('graduationYear', value.replace(/\D/g, ''))} placeholder="Ej.: 2022" keyboardType="number-pad" maxLength={4} />
+        <Field disabled={isPending} label="Folio o referencia del título *" value={form.degreeFolio} onChangeText={(value) => update('degreeFolio', value)} placeholder="Dato privado para revisión" maxLength={50} />
+        <Field disabled={isPending} label="Especialidad *" value={form.specialty} onChangeText={(value) => update('specialty', value)} placeholder="Ej.: Riego, plagas o nutrición" maxLength={60} />
+        <Field disabled={isPending} label="Años de experiencia *" value={form.experienceYears} onChangeText={(value) => update('experienceYears', value.replace(/\D/g, ''))} placeholder="Ej.: 3" keyboardType="number-pad" maxLength={2} />
+        <Field disabled={isPending} label="Correo de contacto público *" value={form.contactEmail} onChangeText={(value) => update('contactEmail', value)} placeholder="nombre@correo.cl" keyboardType="email-address" autoCapitalize="none" maxLength={100} />
+        <Field label="Descripción profesional *">
+          <TextInput accessibilityLabel="Descripción profesional" editable={!isPending} value={form.professionalDescription} onChangeText={(value) => update('professionalDescription', value)} placeholder="Describe brevemente en qué puedes apoyar a los agricultores." placeholderTextColor="#89938C" multiline maxLength={400} style={[styles.input, styles.textarea, isPending && styles.inputDisabled]} />
+        </Field>
+        {!!message && <Text style={message.includes('enviado') ? styles.successText : styles.errorText}>{message}</Text>}
+        {isPending
+          ? <PrimaryButton disabled>Esperando revisión del administrador</PrimaryButton>
+          : <PrimaryButton onPress={submit} disabled={busy}>{busy ? 'Enviando…' : user.verificationStatus === 'approved' ? 'Guardar cambios y enviar a revisión' : user.verificationStatus === 'rejected' ? 'Corregir y reenviar' : 'Enviar para validación'}</PrimaryButton>}
+        <View style={styles.signOutSpacing}><PrimaryButton secondary onPress={signOutUser}>Cerrar sesión</PrimaryButton></View>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+function AdminReviewScreen({ user }) {
+  const [pending, setPending] = useState([]);
+  const [reasons, setReasons] = useState({});
+  const [busyId, setBusyId] = useState(null);
+  const [message, setMessage] = useState('');
+
+  useEffect(() => subscribePendingGraduates(
+    setPending,
+    (error) => setMessage(error.message),
+  ), []);
+
+  const review = async (profile, approved) => {
+    const reason = (reasons[profile.id] || '').trim();
+    if (approved && !profile.rut) return setMessage(`La solicitud de ${profile.name} no incluye RUT. El egresado debe actualizarla y reenviarla.`);
+    if (!approved && !reason) return setMessage('Escribe un motivo antes de rechazar la solicitud.');
+    try {
+      setBusyId(profile.id);
+      setMessage('');
+      await reviewGraduateProfile({ profile, approved, reason, reviewerId: user.uid });
+      setMessage(approved ? `Perfil de ${profile.name} aprobado.` : `Solicitud de ${profile.name} rechazada.`);
+    } catch (error) {
+      setMessage(error.message || 'No fue posible revisar la solicitud.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <ScrollView contentContainerStyle={styles.screenContent} keyboardShouldPersistTaps="handled">
+      <View style={styles.infoCard}>
+        <Text style={styles.infoTitle}>Validación de egresados</Text>
+        <Text style={styles.infoText}>Revisa los antecedentes antes de aprobar. Solo la ficha de contacto se publicará en el directorio.</Text>
+      </View>
+      {!!message && <Text style={message.includes('aprobado') ? styles.successText : styles.mapMessage}>{message}</Text>}
+      {pending.map((profile) => (
+        <View key={profile.id} style={styles.adminCard}>
+          <Text style={styles.graduateName}>{profile.name}</Text>
+          <Text style={styles.graduateMeta}>{profile.degree} · {profile.university}</Text>
+          <Text style={styles.adminDetail}>RUT: {formatChileanRut(profile.rut)}</Text>
+          <Text style={styles.adminDetail}>Correo de contacto: {profile.contactEmail}</Text>
+          <Text style={styles.adminDetail}>Año: {profile.graduationYear}  |  Folio: {profile.degreeFolio}</Text>
+          <Text style={styles.adminDetail}>Especialidad: {profile.specialty}  |  Experiencia: {profile.experienceYears} año(s)</Text>
+          <Text style={styles.graduateSummary}>{profile.professionalDescription}</Text>
+          <TextInput value={reasons[profile.id] || ''} onChangeText={(value) => setReasons((current) => ({ ...current, [profile.id]: value }))} placeholder="Motivo si se rechaza" placeholderTextColor="#89938C" multiline maxLength={180} style={[styles.input, styles.adminReasonInput]} />
+          <View style={styles.adminActions}>
+            <View style={styles.flex}><PrimaryButton secondary onPress={() => review(profile, false)} disabled={busyId === profile.id}>Rechazar</PrimaryButton></View>
+            <View style={styles.flex}><PrimaryButton onPress={() => review(profile, true)} disabled={busyId === profile.id || !profile.rut}>{busyId === profile.id ? 'Procesando…' : profile.rut ? 'Aprobar' : 'Falta RUT'}</PrimaryButton></View>
+          </View>
+        </View>
+      ))}
+      {!pending.length && <EmptyState text="No hay solicitudes pendientes de validación." />}
+      <View style={styles.signOutSpacing}><PrimaryButton secondary onPress={signOutUser}>Cerrar sesión</PrimaryButton></View>
+    </ScrollView>
+  );
+}
+
 function ProfileScreen({ user }) {
+  if (user.role === 'Egresado') return <GraduateProfileScreen user={user} />;
+  if (user.role === 'Administrador') return <AdminReviewScreen user={user} />;
   return (
     <ScrollView contentContainerStyle={styles.screenContent}>
       <View style={styles.profileCard}>
@@ -854,6 +1068,7 @@ const styles = StyleSheet.create({
   field: { marginBottom: 14 },
   fieldLabel: { color: '#284331', fontSize: 13, fontWeight: '800', marginBottom: 7 },
   input: { minHeight: 50, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.white, borderRadius: 13, paddingHorizontal: 14, color: colors.ink, fontSize: 15 },
+  inputDisabled: { backgroundColor: '#F0F3F0', color: '#667168' },
   passwordInputContainer: { flexDirection: 'row', alignItems: 'center', minHeight: 50, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.white, borderRadius: 13, paddingRight: 8 },
   passwordInput: { flex: 1, minHeight: 50, paddingHorizontal: 14, color: colors.ink, fontSize: 15 },
   passwordToggle: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.green50, borderRadius: 8 },
@@ -990,6 +1205,17 @@ const styles = StyleSheet.create({
   profileName: { color: colors.green900, fontSize: 21, fontWeight: '900' },
   profileRole: { color: colors.green700, fontWeight: '800', marginTop: 4 },
   profileEmail: { color: colors.muted, marginTop: 5 },
+  verificationCard: { borderWidth: 1, borderColor: '#D9C98D', borderRadius: 14, padding: 14, backgroundColor: '#FFF9E8', marginVertical: 14 },
+  verificationApproved: { borderColor: '#B9D6BE', backgroundColor: colors.green50 },
+  verificationTitle: { color: colors.green900, fontSize: 15, fontWeight: '900' },
+  verificationText: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 4 },
+  rejectionText: { color: '#9A3D32', fontSize: 13, lineHeight: 18, fontWeight: '700', marginTop: 8 },
+  formHelp: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: 6, marginBottom: 14 },
+  signOutSpacing: { marginTop: 12 },
+  adminCard: { borderWidth: 1, borderColor: colors.line, borderRadius: 16, backgroundColor: colors.white, padding: 14, marginBottom: 12, ...shadows.small },
+  adminDetail: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 5 },
+  adminReasonInput: { minHeight: 82, paddingTop: 13, textAlignVertical: 'top' },
+  adminActions: { flexDirection: 'row', gap: 9, marginTop: 10 },
   sessionCard: { flexDirection: 'row', alignItems: 'center', gap: 13, borderWidth: 1, borderColor: colors.line, borderRadius: 14, padding: 15, backgroundColor: colors.white, marginVertical: 14 },
   onlineDot: { width: 13, height: 13, borderRadius: 7, backgroundColor: '#27A653' },
   sessionTitle: { color: colors.ink, fontWeight: '900' },
