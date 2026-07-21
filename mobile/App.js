@@ -50,8 +50,8 @@ const ROUTES = {
 };
 
 function roleLabel(role) {
-  if (role === 'Administrador') return 'Administrador/a';
-  return role === 'Egresado' ? 'Cuenta de egresado/a' : 'Agricultor/a';
+  if (role === 'Administrador') return 'Administrador';
+  return role === 'Egresado' ? 'Egresado' : 'Agricultor';
 }
 
 function normalizeChileanRut(value = '') {
@@ -562,7 +562,7 @@ function CreateScreen({ user, navigate }) {
 function ReplyCard({ reply }) {
   const date = reply.createdAt ? new Date(reply.createdAt) : new Date();
   const replyRole = reply.authorRole === 'Egresado'
-    ? (reply.authorVerified ? 'Egresado/a validado/a' : 'Cuenta de egresado/a sin validar')
+    ? (reply.authorVerified ? 'Egresado validado' : 'Egresado no validado')
     : roleLabel(reply.authorRole);
   return (
     <View style={styles.replyCard}>
@@ -571,7 +571,6 @@ function ReplyCard({ reply }) {
           <Text style={styles.replyAuthor}>{reply.authorName || 'Usuario'}</Text>
           <Text style={styles.metaText}>{replyRole} · {date.toLocaleDateString('es-CL')}</Text>
         </View>
-        {reply.authorVerified && <Text style={styles.verifiedBadge}>Validado al responder</Text>}
       </View>
       <Text style={styles.replyBody}>{reply.body}</Text>
     </View>
