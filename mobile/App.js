@@ -264,10 +264,19 @@ function ImageViewer({ uri, visible, onClose }) {
 
 function PostCard({ post, images, compact = false, onPress }) {
   const [selectedImage, setSelectedImage] = useState(null);
-  const imageSources = images?.map((image) => image.dataUrl) || post.imageUris || [];
+  const [previewImages, setPreviewImages] = useState([]);
+  const imageSources = (images ?? previewImages).map((image) => image.dataUrl);
   const date = post.createdAt ? new Date(post.createdAt) : new Date();
   const Container = onPress ? Pressable : View;
   const cardProps = onPress ? { accessibilityRole: 'button', onPress } : {};
+
+  useEffect(() => {
+    if (images !== undefined || !post.id || !post.imageCount) {
+      setPreviewImages([]);
+      return undefined;
+    }
+    return subscribePostImages(post.id, setPreviewImages, () => setPreviewImages([]));
+  }, [images, post.id, post.imageCount]);
 
   return (
     <Container {...cardProps} style={styles.postCard}>
@@ -299,10 +308,6 @@ function PostCard({ post, images, compact = false, onPress }) {
           ))}
         </ScrollView>
       )}
-      {!imageSources.length && post.imageCount > 0 && (
-        <Text style={styles.photoCount}>📷 {post.imageCount} fotografía{post.imageCount === 1 ? '' : 's'} adjunta{post.imageCount === 1 ? '' : 's'}</Text>
-      )}
-
       {onPress && <Text style={styles.openPostHint}>Ver respuestas ›</Text>}
 
       <ImageViewer
@@ -492,10 +497,10 @@ function CreateScreen({ user, navigate }) {
         </View>
         <View style={styles.field}>
           <Text style={styles.fieldLabel}>Fotografías ({images.length}/3)</Text>
-          <Text style={styles.pendingText}>Adjunta hasta 3 imágenes desde la cámara o galería. La aplicación las ajusta para que carguen más rápido.</Text>
+          <Text style={styles.pendingText}>Adjunta hasta 3 imágenes desde la cámara o tus fotos.</Text>
           <View style={styles.photoButtonRow}>
-            <Pressable disabled={processingImages} onPress={takePhoto} style={[styles.photoButton, processingImages && styles.photoButtonDisabled]}><Text style={styles.photoButtonText}>Tomar foto</Text></Pressable>
-            <Pressable disabled={processingImages} onPress={chooseFromGallery} style={[styles.photoButton, processingImages && styles.photoButtonDisabled]}><Text style={styles.photoButtonText}>Elegir galería</Text></Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Tomar una fotografía" disabled={processingImages} onPress={takePhoto} style={[styles.photoButton, processingImages && styles.photoButtonDisabled]}><Text style={styles.photoButtonText}>Tomar foto</Text></Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Elegir fotografías del teléfono" disabled={processingImages} onPress={chooseFromGallery} style={[styles.photoButton, processingImages && styles.photoButtonDisabled]}><Text style={styles.photoButtonText}>Elegir fotos</Text></Pressable>
           </View>
           {processingImages && <View style={styles.photoProgress}><ActivityIndicator color={colors.green700} /><Text style={styles.pendingText}>Preparando fotografía…</Text></View>}
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -503,6 +508,8 @@ function CreateScreen({ user, navigate }) {
               <View key={`${image.uri}-${index}`} style={styles.photoPreviewContainer}>
                 <Image source={{ uri: image.uri }} style={styles.photoPreview} />
                 <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Quitar fotografía ${index + 1}`}
                   onPress={() => setImages((current) => current.filter((_, position) => position !== index))}
                   style={styles.removePhotoButton}
                 >
@@ -586,7 +593,7 @@ function PostDetailScreen({ user, post, navigate }) {
         <View style={styles.replyForm}>
           <Field label="Escribe una respuesta">
             <TextInput
-              accessibilityLabel="Escribir respuesta técnica"
+              accessibilityLabel="Escribir respuesta"
               value={body}
               onChangeText={setBody}
               placeholder="Comparte una orientación clara para esta consulta..."
@@ -671,6 +678,11 @@ function MapScreen() {
 
   const getCurrentCoordinates = async () => {
     try {
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+      if (!servicesEnabled) {
+        setMessage('Activa el GPS del teléfono para usar tu ubicación y calcular una ruta.');
+        return null;
+      }
       const permission = await Location.requestForegroundPermissionsAsync();
       if (!permission.granted) {
         setMessage('Activa el permiso de ubicación para calcular la ruta desde tu posición.');
@@ -690,9 +702,23 @@ function MapScreen() {
     if (current) {
       setUserLocation(current);
       setRegion({ ...current, latitudeDelta: 0.08, longitudeDelta: 0.08 });
-      setMessage('Mapa centrado en tu ubicación actual.');
+      setMessage('Mapa centrado en tu ubicación. La tienda seleccionada puede quedar fuera de esta vista si está más lejos.');
     }
   };
+
+  useEffect(() => {
+    let mounted = true;
+    const centerOnUser = async () => {
+      setMessage('Buscando tu ubicación para centrar el mapa…');
+      const current = await getCurrentCoordinates();
+      if (!mounted || !current) return;
+      setUserLocation(current);
+      setRegion({ ...current, latitudeDelta: 0.08, longitudeDelta: 0.08 });
+      setMessage('Mapa centrado en tu ubicación actual. Selecciona un punto de venta.');
+    };
+    centerOnUser();
+    return () => { mounted = false; };
+  }, []);
 
   const openRoute = async () => {
     setMessage('Calculando el punto de partida…');
@@ -702,10 +728,10 @@ function MapScreen() {
     setUserLocation(current);
     const origin = `${current.latitude},${current.longitude}`;
     const destination = `${selected.latitude},${selected.longitude}`;
-    const url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&travelmode=driving&dir_action=navigate`;
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}`;
     try {
       await Linking.openURL(url);
-      setMessage(`Ruta solicitada hacia ${selected.name}. Google Maps mostrará la distancia y el tiempo estimado.`);
+      setMessage(`Ruta solicitada hacia ${selected.name}. Elige en Google Maps si quieres ir en auto, caminando u otro medio.`);
     } catch {
       setMessage('No fue posible abrir Google Maps. Verifica que el dispositivo tenga conexión a internet.');
     }
@@ -718,7 +744,7 @@ function MapScreen() {
       <Text style={styles.mapMessage}>{message}</Text>
       <View style={styles.routeCard}>
         <View style={styles.flex}><Text style={styles.routeTitle}>{selected.name}</Text><Text style={styles.routeAddress}>{selected.address}</Text></View>
-        <Pressable accessibilityRole="link" onPress={openRoute} style={styles.routeButton}><Text style={styles.routeButtonText}>Ver ruta y tiempo ↗</Text></Pressable>
+        <Pressable accessibilityRole="link" onPress={openRoute} style={styles.routeButton}><Text style={styles.routeButtonText}>Ver opciones de ruta ↗</Text></Pressable>
       </View>
       {STORES.map((store) => (
         <Pressable key={store.id} accessibilityRole="button" accessibilityLabel={`${store.name}. ${store.address}`} accessibilityState={{ selected: selected.id === store.id }} onPress={() => selectStore(store)} style={[styles.storeCard, selected.id === store.id && styles.storeCardActive]}>
@@ -912,7 +938,6 @@ const styles = StyleSheet.create({
   removePhotoButton: { position: 'absolute', top: 5, right: 5, width: 25, height: 25, borderRadius: 13, backgroundColor: 'rgba(0,0,0,0.65)', alignItems: 'center', justifyContent: 'center' },
   removePhotoText: { color: colors.white, fontSize: 20, lineHeight: 22, fontWeight: '700' },
   postImagesRow: { marginTop: 12 },
-  photoCount: { color: colors.green700, fontSize: 12, fontWeight: '800', marginTop: 10 },
   postImageButton: { position: 'relative', marginRight: 10 },
   postImage: { width: 120, height: 120, borderRadius: 12, backgroundColor: colors.green100 },
   expandImageBadge: { position: 'absolute', right: 6, bottom: 6, width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.65)' },

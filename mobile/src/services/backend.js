@@ -176,11 +176,12 @@ export async function createForumPost({ title, description, category, images = [
     createdAt: serverTimestamp(),
   });
 
-  safeImages.forEach((dataUrl) => {
-    const imageRef = doc(collection(db, 'posts', postRef.id, 'images'));
+  safeImages.forEach((dataUrl, position) => {
+    const imageRef = doc(db, 'posts', postRef.id, 'images', `image-${position}`);
     batch.set(imageRef, {
       dataUrl,
       authorId: user.uid,
+      position,
       createdAt: serverTimestamp(),
     });
   });
@@ -194,9 +195,16 @@ export function subscribePostImages(postId, callback, onError = () => {}) {
     callback([]);
     return () => {};
   }
-  const imagesQuery = query(collection(db, 'posts', postId, 'images'), orderBy('createdAt', 'asc'));
-  return onSnapshot(imagesQuery, (snapshot) => {
-    callback(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })));
+  const imagesRef = collection(db, 'posts', postId, 'images');
+  return onSnapshot(imagesRef, (snapshot) => {
+    const images = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+    images.sort((left, right) => {
+      const leftPosition = Number.isInteger(left.position) ? left.position : 99;
+      const rightPosition = Number.isInteger(right.position) ? right.position : 99;
+      if (leftPosition !== rightPosition) return leftPosition - rightPosition;
+      return (left.createdAt?.seconds || 0) - (right.createdAt?.seconds || 0);
+    });
+    callback(images);
   }, () => onError(new Error('No fue posible cargar las fotografías de esta consulta.')));
 }
 

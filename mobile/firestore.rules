@@ -34,15 +34,22 @@ service cloud.firestore {
       allow update, delete: if signedIn() && resource.data.authorId == request.auth.uid;
 
       match /images/{imageId} {
-        allow read: if signedIn();
+        allow read: if signedIn()
+          && exists(/databases/$(database)/documents/posts/$(postId));
         allow create: if signedIn()
           && getAfter(/databases/$(database)/documents/posts/$(postId)).data.authorId == request.auth.uid
-          && request.resource.data.keys().hasOnly(['dataUrl', 'authorId', 'createdAt'])
+          && imageId in ['image-0', 'image-1', 'image-2']
+          && request.resource.data.keys().hasOnly(['dataUrl', 'authorId', 'position', 'createdAt'])
           && request.resource.data.authorId == request.auth.uid
+          && request.resource.data.position is int
+          && ((imageId == 'image-0' && request.resource.data.position == 0)
+            || (imageId == 'image-1' && request.resource.data.position == 1)
+            || (imageId == 'image-2' && request.resource.data.position == 2))
+          && request.resource.data.position < getAfter(/databases/$(database)/documents/posts/$(postId)).data.imageCount
           && request.resource.data.dataUrl is string
           && request.resource.data.dataUrl.size() > 0
           && request.resource.data.dataUrl.size() <= 850000
-          && request.resource.data.createdAt is timestamp;
+          && request.resource.data.createdAt == request.time;
         allow update, delete: if false;
       }
 

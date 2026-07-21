@@ -42,7 +42,7 @@ function createMapHtml({ region, stores, selectedId, userLocation }) {
         const selected=store.id===data.selectedId;
         const marker=L.circleMarker([store.latitude,store.longitude],{
           radius:selected?11:9,color:'#fff',weight:3,fillColor:selected?'#0d4d28':'#218a46',fillOpacity:1
-        }).addTo(map).bindPopup('<b>'+escapeHtml(store.name)+'</b><br>'+escapeHtml(store.address));
+        }).addTo(map).bindPopup('<b>'+escapeHtml(store.name)+'</b><br>'+escapeHtml(store.address),{autoPan:false});
         marker.on('click',()=>window.ReactNativeWebView.postMessage(JSON.stringify({type:'store',id:store.id})));
         markers[store.id]=marker;
       });
@@ -63,6 +63,13 @@ export default function StoreMap({ region, stores, selectedId, userLocation, onS
     () => createMapHtml({ region, stores, selectedId, userLocation }),
     [region, stores, selectedId, userLocation],
   );
+  const mapStateKey = [
+    selectedId,
+    region.latitude.toFixed(5),
+    region.longitude.toFixed(5),
+    userLocation?.latitude?.toFixed(5) || 'sin-ubicacion',
+    userLocation?.longitude?.toFixed(5) || 'sin-ubicacion',
+  ].join(':');
 
   const handleMessage = (event) => {
     try {
@@ -77,6 +84,7 @@ export default function StoreMap({ region, stores, selectedId, userLocation, onS
   return (
     <View style={styles.frame}>
       <WebView
+        key={mapStateKey}
         originWhitelist={['*']}
         source={{ html }}
         onMessage={handleMessage}
